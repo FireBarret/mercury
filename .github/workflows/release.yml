@@ -1,0 +1,30 @@
+name: Release
+
+# Builds an ad-hoc-signed Mercury.app and attaches it to a GitHub Release
+# whenever a tag like "v1.0.0" is pushed. Ad-hoc signing means Gatekeeper
+# will still warn first-run users ("unidentified developer") since this
+# repo doesn't have a paid Apple Developer ID to notarize with — see the
+# README's Install section for the one-time right-click-Open workaround.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and sign
+        run: ./build_app.sh
+
+      - name: Zip app
+        run: ditto -c -k --sequesterRsrc --keepParent build/Mercury.app Mercury.zip
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Mercury.zip
+          generate_release_notes: true
