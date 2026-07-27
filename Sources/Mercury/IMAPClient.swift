@@ -418,18 +418,29 @@ final class IMAPClient {
         var sawNewCount: Int?
 
         idleWait: while true {
-            guard let line = try readLogicalLine(deadline: idleDeadline) else {
-                break idleWait // timed out: proactively refresh
-            }
-            if let n = parseExists(line) {
-                sawNewCount = n
+            // Poll in short slices rather than blocking for the full deadline in
+            // one shot, so a checkNow() wake request is noticed within ~1s
+            // instead of only incidentally when other server traffic arrives.
+            let pollDeadline = min(idleDeadline, Date().addingTimeInterval(1))
+            if let line = try readLogicalLine(deadline: pollDeadline) {
+                // Any untagged push during IDLE -- new mail (EXISTS), a message
+                // being marked read elsewhere (FETCH FLAGS), a deletion
+                // (EXPUNGE), etc. -- means our cached state may be stale, so
+                // refresh rather than only reacting to EXISTS changes.
+                // Otherwise the unread badge stays stuck after mail is read
+                // outside this app (Gmail web, phone, or Mercury's own
+                // "open in Mail.app" links).
+                if let n = parseExists(line) {
+                    sawNewCount = n
+                }
                 break idleWait
             }
+
             cond.lock()
             let woken = wakeRequested
             if woken { wakeRequested = false }
             cond.unlock()
-            if woken {
+            if woken || Date() >= idleDeadline {
                 break idleWait
             }
         }
