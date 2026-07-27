@@ -19,10 +19,19 @@ an event to it the moment a message lands — no polling interval to wait out.
 Grab the latest `.zip` from [Releases](../../releases), unzip it, and drag
 `Mercury.app` to `/Applications`.
 
-Mercury is **ad-hoc signed**, not notarized by Apple (that requires a paid
-Apple Developer account), so on first launch Gatekeeper will say it's from
-an "unidentified developer." Right-click the app → **Open** → **Open**
-again in the dialog. You only need to do this once.
+Mercury is **ad-hoc signed**, not notarized by Apple (notarization requires
+a paid Apple Developer account), so on first launch Gatekeeper blocks it
+with "Apple could not verify 'Mercury.app' is free of malware." This is
+normal for a free ad-hoc-signed app and only needs fixing once — the
+usual right-click → Open trick does **not** work here (that only bypasses
+Gatekeeper for Developer-ID-signed-but-unnotarized apps, not ad-hoc ones).
+Instead, do one of:
+
+- **Terminal (easiest):** `xattr -cr /Applications/Mercury.app`, then open
+  it normally.
+- **System Settings:** Privacy & Security → scroll to the Security section
+  → click **Open Anyway** next to the Mercury.app warning → authenticate →
+  try opening the app again and confirm the final dialog.
 
 ### Option B: Build it yourself
 
