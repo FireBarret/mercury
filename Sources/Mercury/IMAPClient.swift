@@ -484,9 +484,27 @@ final class IMAPClient {
             knownMessageCount = latestCount
         }
 
-        let unseen = try fetchUnseenCount()
-        onUnreadCountChanged?(unseen)
-        onLatestMessagesChanged?(try fetchLatestMessages(count: recentListSize(forUnread: unseen)))
+        if shouldMarkAllRead {
+            // The UI already optimistically cleared; checking again this
+            // instant risks racing Gmail's backend and reading back stale
+            // (still-unseen) state right after. Give it a moment to settle
+            // and confirm once, instead of refreshing immediately here.
+            scheduleDelayedRecheck(after: 12)
+        } else {
+            let unseen = try fetchUnseenCount()
+            onUnreadCountChanged?(unseen)
+            onLatestMessagesChanged?(try fetchLatestMessages(count: recentListSize(forUnread: unseen)))
+        }
+    }
+
+    private func scheduleDelayedRecheck(after seconds: TimeInterval) {
+        // Deliberately not sessionQueue -- that thread is permanently busy
+        // running the IDLE loop, so anything scheduled on it would never
+        // get a turn. checkNow() itself is just a lock/signal, safe from
+        // any thread.
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.checkNow()
+        }
     }
 
     private func markAllMessagesRead() throws {

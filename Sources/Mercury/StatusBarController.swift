@@ -85,6 +85,20 @@ final class StatusBarController {
         statusItem.button?.toolTip = status
     }
 
+    /// Clears the badge and unread dots immediately, ahead of the IMAP
+    /// round-trip confirming it — the STORE command basically never fails,
+    /// so waiting on the server before updating the UI just reads as lag.
+    /// The next real refresh will reconcile if something did go wrong.
+    func markAllAsReadOptimistically() {
+        updateUnreadCount(0)
+        for item in recentItems {
+            guard let message = item.representedObject as? MailHeader, message.isUnread else { continue }
+            let read = MailHeader(from: message.from, subject: message.subject, messageID: message.messageID, isUnread: false)
+            item.representedObject = read
+            item.attributedTitle = formattedTitle(for: read)
+        }
+    }
+
     /// Pops the menu open as if the status item had been clicked — used by
     /// the global keyboard shortcut. Arrow-key navigation once it's open is
     /// native NSMenu behavior, no extra code needed.
@@ -114,9 +128,16 @@ final class StatusBarController {
     }
 
     private func formattedTitle(for message: MailHeader) -> NSAttributedString {
-        let result = NSMutableAttributedString(
-            string: message.isUnread ? "🔵 " : "    "
-        )
+        let result = NSMutableAttributedString()
+        if message.isUnread {
+            result.append(NSAttributedString(string: "● ", attributes: [
+                .font: NSFont.systemFont(ofSize: 8, weight: .black),
+                .foregroundColor: NSColor.systemBlue,
+                .baselineOffset: 1.5
+            ]))
+        } else {
+            result.append(NSAttributedString(string: "   ", attributes: [.font: NSFont.systemFont(ofSize: 13)]))
+        }
         result.append(NSAttributedString(
             string: (message.from.isEmpty ? "Unknown sender" : message.from) + "\n",
             attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
