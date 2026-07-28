@@ -5,6 +5,7 @@ struct MailHeader {
     let from: String
     let subject: String
     let messageID: String?
+    let isUnread: Bool
 }
 
 enum IMAPError: Error, CustomStringConvertible {
@@ -47,6 +48,7 @@ final class IMAPClient {
     private var isRunning = false
     private var reconnectAttempt = 0
     private var wakeRequested = false
+    private var markAllAsReadRequested = false
 
     var onNewMail: (([MailHeader]) -> Void)?
     var onUnreadCountChanged: ((Int) -> Void)?
@@ -82,6 +84,14 @@ final class IMAPClient {
         cond.unlock()
     }
 
+    /// Ask the session to mark every message in the mailbox as read.
+    func markAllAsRead() {
+        cond.lock()
+        markAllAsReadRequested = true
+        cond.signal()
+        cond.unlock()
+    }
+
     // MARK: - Session loop
 
     private func runLoop() {
@@ -107,8 +117,9 @@ final class IMAPClient {
         reconnectAttempt = 0
         onStatusChanged?("Connected")
         knownMessageCount = try selectInbox()
-        onUnreadCountChanged?(try fetchUnseenCount())
-        onLatestMessagesChanged?(try fetchLatestMessages(count: 3))
+        let unseen = try fetchUnseenCount()
+        onUnreadCountChanged?(unseen)
+        onLatestMessagesChanged?(try fetchLatestMessages(count: recentListSize(forUnread: unseen)))
 
         while isRunning {
             try idleCycle()
@@ -339,20 +350,23 @@ final class IMAPClient {
     private func fetchHeaders(from: Int, to: Int) throws -> [MailHeader] {
         guard from <= to else { return [] }
         let tag = nextTag()
-        try writeLine("\(tag) FETCH \(from):\(to) (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
+        try writeLine("\(tag) FETCH \(from):\(to) (FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
         let lines = try readUntilTagged(tag)
         var headers: [MailHeader] = []
         for line in lines where line.contains("FETCH") && line.contains("\n") {
             // Our readLogicalLine joins "<head>\n<literal + trailer>" for lines with literals.
+            // FLAGS is requested first, so it lands in the part before the literal.
             let parts = line.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
+            let metaPart = String(parts[0])
             let headerBlock = String(parts[1])
-            headers.append(parseHeaderBlock(headerBlock))
+            let isUnread = !metaPart.contains("\\Seen")
+            headers.append(parseHeaderBlock(headerBlock, isUnread: isUnread))
         }
         return headers
     }
 
-    private func parseHeaderBlock(_ block: String) -> MailHeader {
+    private func parseHeaderBlock(_ block: String, isUnread: Bool) -> MailHeader {
         var from = ""
         var subject = ""
         var messageID: String?
@@ -375,7 +389,7 @@ final class IMAPClient {
                 messageID = String(line.dropFirst("message-id:".count)).trimmingCharacters(in: .whitespaces)
             }
         }
-        return MailHeader(from: prettifyFrom(from), subject: subject, messageID: messageID)
+        return MailHeader(from: prettifyFrom(from), subject: subject, messageID: messageID, isUnread: isUnread)
     }
 
     private func prettifyFrom(_ raw: String) -> String {
@@ -416,11 +430,13 @@ final class IMAPClient {
         // Gmail drops IDLE connections after ~29 minutes of inactivity; refresh well before that.
         let idleDeadline = Date().addingTimeInterval(25 * 60)
         var sawNewCount: Int?
+        var shouldMarkAllRead = false
 
         idleWait: while true {
             // Poll in short slices rather than blocking for the full deadline in
-            // one shot, so a checkNow() wake request is noticed within ~1s
-            // instead of only incidentally when other server traffic arrives.
+            // one shot, so a checkNow()/markAllAsRead() wake request is noticed
+            // within ~1s instead of only incidentally when other server traffic
+            // arrives.
             let pollDeadline = min(idleDeadline, Date().addingTimeInterval(1))
             if let line = try readLogicalLine(deadline: pollDeadline) {
                 // Any untagged push during IDLE -- new mail (EXISTS), a message
@@ -438,15 +454,22 @@ final class IMAPClient {
 
             cond.lock()
             let woken = wakeRequested
+            let markRequested = markAllAsReadRequested
             if woken { wakeRequested = false }
+            if markRequested { markAllAsReadRequested = false }
             cond.unlock()
-            if woken || Date() >= idleDeadline {
+            if markRequested { shouldMarkAllRead = true }
+            if woken || markRequested || Date() >= idleDeadline {
                 break idleWait
             }
         }
 
         try writeLine("DONE")
         _ = try readUntilTagged(tag)
+
+        if shouldMarkAllRead {
+            try markAllMessagesRead()
+        }
 
         let known = knownMessageCount ?? 0
         let latestCount = try sawNewCount ?? currentMessageCount()
@@ -461,8 +484,23 @@ final class IMAPClient {
             knownMessageCount = latestCount
         }
 
-        onUnreadCountChanged?(try fetchUnseenCount())
-        onLatestMessagesChanged?(try fetchLatestMessages(count: 3))
+        let unseen = try fetchUnseenCount()
+        onUnreadCountChanged?(unseen)
+        onLatestMessagesChanged?(try fetchLatestMessages(count: recentListSize(forUnread: unseen)))
+    }
+
+    private func markAllMessagesRead() throws {
+        guard (knownMessageCount ?? 0) > 0 else { return }
+        let tag = nextTag()
+        try writeLine("\(tag) STORE 1:* +FLAGS.SILENT (\\Seen)")
+        _ = try readUntilTagged(tag)
+    }
+
+    /// Shows at least 3 recent messages, but grows up to 10 when there's
+    /// more unread mail than that, so most unread mail is visible at a
+    /// glance without needing to open Gmail.
+    private func recentListSize(forUnread unread: Int) -> Int {
+        min(10, max(3, unread))
     }
 
     /// The `count` most recent messages in the mailbox, newest first,

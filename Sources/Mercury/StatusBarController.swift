@@ -11,6 +11,7 @@ final class StatusBarController {
     private let onOpenGmail: () -> Void
     private let onOpenMessage: (MailHeader) -> Void
     private let onTestNotification: () -> Void
+    private let onMarkAllAsRead: () -> Void
     private let onPreferences: () -> Void
     private let onQuit: () -> Void
 
@@ -18,12 +19,14 @@ final class StatusBarController {
          onOpenGmail: @escaping () -> Void,
          onOpenMessage: @escaping (MailHeader) -> Void,
          onTestNotification: @escaping () -> Void,
+         onMarkAllAsRead: @escaping () -> Void,
          onPreferences: @escaping () -> Void,
          onQuit: @escaping () -> Void) {
         self.onCheckNow = onCheckNow
         self.onOpenGmail = onOpenGmail
         self.onOpenMessage = onOpenMessage
         self.onTestNotification = onTestNotification
+        self.onMarkAllAsRead = onMarkAllAsRead
         self.onPreferences = onPreferences
         self.onQuit = onQuit
 
@@ -42,6 +45,7 @@ final class StatusBarController {
         menu.addItem(makeItem(title: "Check Now", action: #selector(checkNowTapped)))
         menu.addItem(makeItem(title: "Open Gmail", action: #selector(openGmailTapped)))
         menu.addItem(makeItem(title: "Send Test Notification", action: #selector(testNotificationTapped)))
+        menu.addItem(makeItem(title: "Mark All as Read", action: #selector(markAllAsReadTapped)))
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Preferences…", action: #selector(preferencesTapped), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -59,6 +63,7 @@ final class StatusBarController {
     @objc private func checkNowTapped() { onCheckNow() }
     @objc private func openGmailTapped() { onOpenGmail() }
     @objc private func testNotificationTapped() { onTestNotification() }
+    @objc private func markAllAsReadTapped() { onMarkAllAsRead() }
     @objc private func preferencesTapped() { onPreferences() }
     @objc private func quitTapped() { onQuit() }
 
@@ -110,11 +115,14 @@ final class StatusBarController {
 
     private func formattedTitle(for message: MailHeader) -> NSAttributedString {
         let result = NSMutableAttributedString(
-            string: (message.from.isEmpty ? "Unknown sender" : message.from) + "\n",
-            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
+            string: message.isUnread ? "🔵 " : "    "
         )
         result.append(NSAttributedString(
-            string: truncate(message.subject.isEmpty ? "(no subject)" : message.subject, maxLength: 60),
+            string: (message.from.isEmpty ? "Unknown sender" : message.from) + "\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
+        ))
+        result.append(NSAttributedString(
+            string: "    " + truncate(message.subject.isEmpty ? "(no subject)" : message.subject, maxLength: 60),
             attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
         ))
         return result

@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             onTestNotification: { [weak self] in self?.notificationManager.sendTestNotification() },
+            onMarkAllAsRead: { [weak self] in self?.imapClient?.markAllAsRead() },
             onPreferences: { [weak self] in self?.showPreferences() },
             onQuit: { NSApp.terminate(nil) }
         )
