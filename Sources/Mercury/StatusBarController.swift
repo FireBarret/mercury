@@ -161,21 +161,34 @@ final class StatusBarController {
         }
     }
 
+    /// Omits either number entirely when its account has no unread mail,
+    /// rather than always showing both (e.g. "0 · 3") -- saves space and
+    /// there's no ambiguity about which account a lone number belongs to
+    /// since it keeps that account's color (blue for primary, orange for
+    /// secondary).
     private func dualCountTitle(primary: Int, secondary: Int) -> NSAttributedString {
+        guard primary > 0 || secondary > 0 else { return NSAttributedString(string: "") }
+
         let font = NSFont.systemFont(ofSize: 13, weight: .medium)
         let result = NSMutableAttributedString(string: " ")
-        result.append(NSAttributedString(
-            string: "\(primary)",
-            attributes: [.font: font, .foregroundColor: NSColor.systemBlue]
-        ))
-        result.append(NSAttributedString(
-            string: " · ",
-            attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
-        ))
-        result.append(NSAttributedString(
-            string: "\(secondary)",
-            attributes: [.font: font, .foregroundColor: NSColor.systemOrange]
-        ))
+        if primary > 0 {
+            result.append(NSAttributedString(
+                string: "\(primary)",
+                attributes: [.font: font, .foregroundColor: NSColor.systemBlue]
+            ))
+        }
+        if primary > 0 && secondary > 0 {
+            result.append(NSAttributedString(
+                string: " · ",
+                attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
+            ))
+        }
+        if secondary > 0 {
+            result.append(NSAttributedString(
+                string: "\(secondary)",
+                attributes: [.font: font, .foregroundColor: NSColor.systemOrange]
+            ))
+        }
         return result
     }
 
