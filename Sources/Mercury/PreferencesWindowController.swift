@@ -10,19 +10,37 @@ final class PreferencesWindowController: NSWindowController {
         action: nil
     )
     private let shortcutRecorder = ShortcutRecorderView()
+
+    private let autoRefreshCheckbox = NSButton(
+        checkboxWithTitle: "Automatically refresh Mail.app when new mail arrives",
+        target: nil,
+        action: nil
+    )
+    private let openInPopUp = NSPopUpButton()
+    private let minCountStepper = NSStepper()
+    private let minCountValueLabel = NSTextField(labelWithString: "")
+    private let maxCountStepper = NSStepper()
+    private let maxCountValueLabel = NSTextField(labelWithString: "")
+
     private let onSave: (String, String) -> Void
     private let onShortcutChanged: (UInt32?, UInt32?) -> Void
+    private let onDisplaySettingsChanged: () -> Void
 
-    init(onSave: @escaping (String, String) -> Void, onShortcutChanged: @escaping (UInt32?, UInt32?) -> Void) {
+    init(
+        onSave: @escaping (String, String) -> Void,
+        onShortcutChanged: @escaping (UInt32?, UInt32?) -> Void,
+        onDisplaySettingsChanged: @escaping () -> Void
+    ) {
         self.onSave = onSave
         self.onShortcutChanged = onShortcutChanged
+        self.onDisplaySettingsChanged = onDisplaySettingsChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 610),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Mail Notification Buddy — Setup"
+        window.title = "Mercury — Setup"
         window.center()
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -72,6 +90,53 @@ final class PreferencesWindowController: NSWindowController {
         shortcutRow.orientation = .horizontal
         shortcutRow.spacing = 8
 
+        // --- Mail behavior section ---
+
+        autoRefreshCheckbox.target = self
+        autoRefreshCheckbox.action = #selector(autoRefreshToggled)
+        autoRefreshCheckbox.state = Settings.autoRefreshMailApp ? .on : .off
+
+        let openInLabel = NSTextField(labelWithString: "Open messages in:")
+        openInPopUp.removeAllItems()
+        openInPopUp.addItems(withTitles: MailOpenAction.allCases.map { $0.displayName })
+        if let index = MailOpenAction.allCases.firstIndex(of: Settings.openMailAction) {
+            openInPopUp.selectItem(at: index)
+        }
+        openInPopUp.target = self
+        openInPopUp.action = #selector(openInChanged)
+        let openInRow = NSStackView(views: [openInLabel, openInPopUp])
+        openInRow.orientation = .horizontal
+        openInRow.spacing = 8
+
+        minCountStepper.minValue = 1
+        minCountStepper.maxValue = 20
+        minCountStepper.increment = 1
+        minCountStepper.integerValue = Settings.recentListMinCount
+        minCountValueLabel.stringValue = "\(Settings.recentListMinCount)"
+        minCountStepper.target = self
+        minCountStepper.action = #selector(minCountChanged)
+        let minCountLabel = NSTextField(labelWithString: "Recent messages shown (minimum):")
+        let minCountRow = NSStackView(views: [minCountLabel, minCountStepper, minCountValueLabel])
+        minCountRow.orientation = .horizontal
+        minCountRow.spacing = 6
+
+        maxCountStepper.minValue = 1
+        maxCountStepper.maxValue = 50
+        maxCountStepper.increment = 1
+        maxCountStepper.integerValue = Settings.recentListMaxCount
+        maxCountValueLabel.stringValue = "\(Settings.recentListMaxCount)"
+        maxCountStepper.target = self
+        maxCountStepper.action = #selector(maxCountChanged)
+        let maxCountLabel = NSTextField(labelWithString: "...up to this many if there's unread mail:")
+        let maxCountRow = NSStackView(views: [maxCountLabel, maxCountStepper, maxCountValueLabel])
+        maxCountRow.orientation = .horizontal
+        maxCountRow.spacing = 6
+
+        let mailBehaviorStack = NSStackView(views: [autoRefreshCheckbox, openInRow, minCountRow, maxCountRow])
+        mailBehaviorStack.orientation = .vertical
+        mailBehaviorStack.alignment = .leading
+        mailBehaviorStack.spacing = 10
+
         let saveButton = NSButton(title: "Save & Connect", target: self, action: #selector(saveTapped))
         saveButton.keyEquivalent = "\r"
         saveButton.bezelStyle = .rounded
@@ -93,7 +158,8 @@ final class PreferencesWindowController: NSWindowController {
         buttonRow.orientation = .horizontal
 
         let mainStack = NSStackView(views: [
-            accountStack, divider(width: fieldWidth), optionsStack, divider(width: fieldWidth), buttonRow
+            accountStack, divider(width: fieldWidth), optionsStack, divider(width: fieldWidth),
+            mailBehaviorStack, divider(width: fieldWidth), buttonRow
         ])
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
@@ -150,6 +216,41 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func clearShortcutTapped() {
         shortcutRecorder.setDisplayString("")
         onShortcutChanged(nil, nil)
+    }
+
+    @objc private func autoRefreshToggled() {
+        Settings.autoRefreshMailApp = (autoRefreshCheckbox.state == .on)
+    }
+
+    @objc private func openInChanged() {
+        let index = openInPopUp.indexOfSelectedItem
+        let actions = MailOpenAction.allCases
+        guard index >= 0, index < actions.count else { return }
+        Settings.openMailAction = actions[index]
+    }
+
+    @objc private func minCountChanged() {
+        let value = minCountStepper.integerValue
+        if value > maxCountStepper.integerValue {
+            maxCountStepper.integerValue = value
+            maxCountValueLabel.stringValue = "\(value)"
+            Settings.recentListMaxCount = value
+        }
+        minCountValueLabel.stringValue = "\(value)"
+        Settings.recentListMinCount = value
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func maxCountChanged() {
+        let value = maxCountStepper.integerValue
+        if value < minCountStepper.integerValue {
+            minCountStepper.integerValue = value
+            minCountValueLabel.stringValue = "\(value)"
+            Settings.recentListMinCount = value
+        }
+        maxCountValueLabel.stringValue = "\(value)"
+        Settings.recentListMaxCount = value
+        onDisplaySettingsChanged()
     }
 
     func show() {

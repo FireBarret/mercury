@@ -514,11 +514,14 @@ final class IMAPClient {
         _ = try readUntilTagged(tag)
     }
 
-    /// Shows at least 3 recent messages, but grows up to 10 when there's
-    /// more unread mail than that, so most unread mail is visible at a
-    /// glance without needing to open Gmail.
+    /// Shows at least `Settings.recentListMinCount` recent messages, but
+    /// grows up to `Settings.recentListMaxCount` when there's more unread
+    /// mail than that, so most unread mail is visible at a glance without
+    /// needing to open Gmail.
     private func recentListSize(forUnread unread: Int) -> Int {
-        min(10, max(3, unread))
+        let minCount = max(0, Settings.recentListMinCount)
+        let maxCount = max(minCount, Settings.recentListMaxCount)
+        return min(maxCount, max(minCount, unread))
     }
 
     /// The `count` most recent messages in the mailbox, newest first,

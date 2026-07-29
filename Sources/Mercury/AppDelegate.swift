@@ -14,9 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onCheckNow: { [weak self] in self?.imapClient?.checkNow() },
             onOpenGmail: { [weak self] in self?.openGmail() },
             onOpenMessage: { message in
-                if let messageID = message.messageID {
-                    MailAppOpener.openMessage(withMessageID: messageID)
-                }
+                MessageOpener.open(messageID: message.messageID)
             },
             onTestNotification: { [weak self] in self?.notificationManager.sendTestNotification() },
             onMarkAllAsRead: { [weak self] in
@@ -65,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
             }
-            if !messages.isEmpty {
+            if !messages.isEmpty && Settings.autoRefreshMailApp {
                 MailAppRefresher.refreshAndCloseIfNeeded()
             }
         }
@@ -105,7 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         self.hotKeyManager.unregister()
                     }
-                }
+                },
+                onDisplaySettingsChanged: { [weak self] in self?.imapClient?.checkNow() }
             )
         }
         preferencesWindowController?.show()

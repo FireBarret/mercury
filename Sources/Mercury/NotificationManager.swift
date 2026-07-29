@@ -56,15 +56,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Fired when the user clicks a notification — jump straight to that
-    /// message in Mail.app instead of leaving them to go find it themselves.
+    /// message instead of leaving them to go find it themselves.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        if let messageID = response.notification.request.content.userInfo["messageID"] as? String {
-            MailAppOpener.openMessage(withMessageID: messageID)
-        }
+        MessageOpener.open(messageID: response.notification.request.content.userInfo["messageID"] as? String)
         completionHandler()
     }
 }
