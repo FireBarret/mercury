@@ -9,7 +9,14 @@ struct AccountDisplayState {
 }
 
 final class StatusBarController {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    // .variableLength lets the button's width track its actual content
+    // (image + optional title). Fixed-width .squareLength was clipping the
+    // wider dual-badge layout, which is why the icon looked stuck shifted
+    // left even after everything was marked read.
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let primaryBadge = BadgeView(color: .systemBlue)
+    private let secondaryBadge = BadgeView(color: .systemOrange)
+    private var badgesInstalled = false
     private let menu = NSMenu()
     private let statusLabelItem = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
     private let recentHeaderItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
@@ -103,15 +110,18 @@ final class StatusBarController {
     }
 
     /// Renders 1 or 2 configured accounts. With 1 account this looks exactly
-    /// like before (plain envelope icon + numeric badge, single "Recent"
-    /// section). With 2, it switches to the dual-badge icon and splits into
-    /// two clearly separated "Recent" sections, each labeled with that
-    /// account's display name (custom, or "Mail 1"/"Mail 2" by default) so
-    /// it's clear which inbox each message belongs to.
+    /// like before (plain template envelope icon + numeric text badge,
+    /// single "Recent" section). With 2, the icon stays a genuine template
+    /// image (so AppKit handles light/dark menu bar tinting correctly,
+    /// same as the 1-account case) with two small always-colored badge
+    /// views layered on top in the corners, and the "Recent" section splits
+    /// into two, each labeled with that account's display name (custom, or
+    /// "Mail 1"/"Mail 2" by default).
     func update(accounts: [AccountDisplayState]) {
         lastAccounts = accounts
 
         guard !accounts.isEmpty else {
+            hideBadges()
             statusItem.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Mail")
             statusItem.button?.title = ""
             statusLabelItem.title = "Not signed in"
@@ -122,6 +132,7 @@ final class StatusBarController {
         }
 
         if accounts.count == 1 {
+            hideBadges()
             let account = accounts[0]
             statusItem.button?.image = NSImage(
                 systemSymbolName: account.unreadCount > 0 ? "envelope.fill" : "envelope",
@@ -136,12 +147,25 @@ final class StatusBarController {
         } else {
             let primary = accounts.first { $0.slot == .primary } ?? accounts[0]
             let secondary = accounts.first { $0.slot == .secondary } ?? accounts[1]
+            let hasAnyUnread = primary.unreadCount > 0 || secondary.unreadCount > 0
 
-            statusItem.button?.image = MenuBarIconRenderer.dualAccountIcon(
-                primaryUnread: primary.unreadCount,
-                secondaryUnread: secondary.unreadCount
+            installBadgesIfNeeded()
+            statusItem.button?.image = NSImage(
+                systemSymbolName: hasAnyUnread ? "envelope.fill" : "envelope",
+                accessibilityDescription: "Mail"
             )
             statusItem.button?.title = ""
+            // Fixed width, wide enough for the icon plus room for the two
+            // corner badges -- .variableLength alone won't account for
+            // these since they're subviews, not part of the button's own
+            // image/title content.
+            statusItem.length = 34
+
+            primaryBadge.isHidden = primary.unreadCount == 0
+            primaryBadge.setCount(primary.unreadCount)
+            secondaryBadge.isHidden = secondary.unreadCount == 0
+            secondaryBadge.setCount(secondary.unreadCount)
+
             let total = primary.unreadCount + secondary.unreadCount
             statusLabelItem.title = total > 0 ? "\(total) unread total" : "No unread mail"
 
@@ -149,6 +173,32 @@ final class StatusBarController {
             renderSection(header: recentHeaderItem2, items: &recentItems2, messages: secondary.recentMessages, headerTitle: secondary.displayName)
             interSectionDivider.isHidden = false
         }
+    }
+
+    private func installBadgesIfNeeded() {
+        guard !badgesInstalled, let button = statusItem.button else { return }
+        button.addSubview(primaryBadge)
+        button.addSubview(secondaryBadge)
+        primaryBadge.translatesAutoresizingMaskIntoConstraints = false
+        secondaryBadge.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            primaryBadge.widthAnchor.constraint(equalToConstant: 11),
+            primaryBadge.heightAnchor.constraint(equalToConstant: 11),
+            primaryBadge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
+            primaryBadge.topAnchor.constraint(equalTo: button.topAnchor, constant: 1),
+
+            secondaryBadge.widthAnchor.constraint(equalToConstant: 11),
+            secondaryBadge.heightAnchor.constraint(equalToConstant: 11),
+            secondaryBadge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
+            secondaryBadge.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -1)
+        ])
+        badgesInstalled = true
+    }
+
+    private func hideBadges() {
+        primaryBadge.isHidden = true
+        secondaryBadge.isHidden = true
+        statusItem.length = NSStatusItem.variableLength
     }
 
     /// Clears every badge and unread dot immediately, ahead of the IMAP
