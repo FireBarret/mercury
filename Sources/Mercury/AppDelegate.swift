@@ -3,7 +3,9 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var preferencesWindowController: PreferencesWindowController?
-    private var imapClient: IMAPClient?
+    private var imapClients: [AccountSlot: IMAPClient] = [:]
+    private var unreadCounts: [AccountSlot: Int] = [:]
+    private var recentMessages: [AccountSlot: [MailHeader]] = [:]
     private let notificationManager = NotificationManager()
     private let hotKeyManager = GlobalHotKeyManager()
 
@@ -11,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notificationManager.requestAuthorization()
 
         statusBarController = StatusBarController(
-            onCheckNow: { [weak self] in self?.imapClient?.checkNow() },
+            onCheckNow: { [weak self] in self?.imapClients.values.forEach { $0.checkNow() } },
             onOpenGmail: { [weak self] in self?.openGmail() },
             onOpenMessage: { message in
                 MessageOpener.open(messageID: message.messageID)
@@ -19,13 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onTestNotification: { [weak self] in self?.notificationManager.sendTestNotification() },
             onMarkAllAsRead: { [weak self] in
                 self?.statusBarController?.markAllAsReadOptimistically()
-                self?.imapClient?.markAllAsRead()
+                self?.imapClients.values.forEach { $0.markAllAsRead() }
             },
             onPreferences: { [weak self] in self?.showPreferences() },
             onQuit: { NSApp.terminate(nil) }
         )
 
-        startClientIfConfigured()
+        startAllConfiguredClients()
         registerSavedShortcutIfNeeded()
     }
 
@@ -41,16 +43,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func startClientIfConfigured() {
-        guard let email = Credentials.email, let password = Credentials.appPassword(for: email) else {
-            showPreferences()
-            return
+    private func startAllConfiguredClients() {
+        var startedAny = false
+        for slot in AccountSlot.allCases {
+            guard let email = Credentials.email(for: slot), let password = Credentials.appPassword(for: email) else {
+                continue
+            }
+            startClient(email: email, password: password, slot: slot)
+            startedAny = true
         }
-        startClient(email: email, password: password)
+        if !startedAny {
+            showPreferences()
+        }
     }
 
-    private func startClient(email: String, password: String) {
-        imapClient?.stop()
+    private func startClient(email: String, password: String, slot: AccountSlot) {
+        imapClients[slot]?.stop()
 
         let client = IMAPClient(email: email, appPassword: password)
         client.onNewMail = { [weak self] messages in
@@ -59,7 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.notificationManager.notifyNewMail(
                         from: message.from,
                         subject: message.subject,
-                        messageID: message.messageID
+                        messageID: message.messageID,
+                        accountEmail: message.accountEmail
                     )
                 }
             }
@@ -69,7 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         client.onUnreadCountChanged = { [weak self] count in
             DispatchQueue.main.async {
-                self?.statusBarController?.updateUnreadCount(count)
+                self?.unreadCounts[slot] = count
+                self?.refreshStatusBar()
             }
         }
         client.onStatusChanged = { [weak self] status in
@@ -79,19 +89,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         client.onLatestMessagesChanged = { [weak self] messages in
             DispatchQueue.main.async {
-                self?.statusBarController?.updateRecentMessages(messages)
+                self?.recentMessages[slot] = messages
+                self?.refreshStatusBar()
             }
         }
         client.start()
-        imapClient = client
+        imapClients[slot] = client
+    }
+
+    private func stopClient(slot: AccountSlot) {
+        imapClients[slot]?.stop()
+        imapClients[slot] = nil
+        unreadCounts[slot] = nil
+        recentMessages[slot] = nil
+    }
+
+    /// Rebuilds the combined menu-bar/menu state from whichever accounts
+    /// are currently running. Called every time either account reports new
+    /// counts or messages, so the two stay in sync in the shared UI.
+    private func refreshStatusBar() {
+        let accounts: [AccountDisplayState] = AccountSlot.allCases.compactMap { slot in
+            guard let email = Credentials.email(for: slot), imapClients[slot] != nil else { return nil }
+            return AccountDisplayState(
+                slot: slot,
+                email: email,
+                unreadCount: unreadCounts[slot] ?? 0,
+                recentMessages: recentMessages[slot] ?? []
+            )
+        }
+        statusBarController?.update(accounts: accounts)
     }
 
     private func showPreferences() {
         if preferencesWindowController == nil {
             preferencesWindowController = PreferencesWindowController(
-                onSave: { [weak self] email, password in
-                    Credentials.save(email: email, appPassword: password)
-                    self?.startClient(email: email, password: password)
+                onSaveAccount: { [weak self] email, password, slot in
+                    Credentials.save(email: email, appPassword: password, slot: slot)
+                    self?.startClient(email: email, password: password, slot: slot)
+                },
+                onRemoveAccount: { [weak self] slot in
+                    Credentials.clear(slot: slot)
+                    self?.stopClient(slot: slot)
+                    self?.refreshStatusBar()
                 },
                 onShortcutChanged: { [weak self] keyCode, modifiers in
                     Settings.shortcutKeyCode = keyCode
@@ -104,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.hotKeyManager.unregister()
                     }
                 },
-                onDisplaySettingsChanged: { [weak self] in self?.imapClient?.checkNow() }
+                onDisplaySettingsChanged: { [weak self] in self?.imapClients.values.forEach { $0.checkNow() } }
             )
         }
         preferencesWindowController?.show()

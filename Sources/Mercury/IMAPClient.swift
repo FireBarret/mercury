@@ -6,6 +6,7 @@ struct MailHeader {
     let subject: String
     let messageID: String?
     let isUnread: Bool
+    let accountEmail: String
 }
 
 enum IMAPError: Error, CustomStringConvertible {
@@ -389,7 +390,13 @@ final class IMAPClient {
                 messageID = String(line.dropFirst("message-id:".count)).trimmingCharacters(in: .whitespaces)
             }
         }
-        return MailHeader(from: prettifyFrom(from), subject: subject, messageID: messageID, isUnread: isUnread)
+        return MailHeader(
+            from: prettifyFrom(from),
+            subject: subject,
+            messageID: messageID,
+            isUnread: isUnread,
+            accountEmail: email
+        )
     }
 
     private func prettifyFrom(_ raw: String) -> String {

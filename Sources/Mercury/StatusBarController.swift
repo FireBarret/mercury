@@ -1,11 +1,21 @@
 import AppKit
 
+struct AccountDisplayState {
+    let slot: AccountSlot
+    let email: String
+    let unreadCount: Int
+    let recentMessages: [MailHeader]
+}
+
 final class StatusBarController {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private let statusLabelItem = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
     private let recentHeaderItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+    private let recentHeaderItem2 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var recentItems: [NSMenuItem] = []
+    private var recentItems2: [NSMenuItem] = []
+    private var lastAccounts: [AccountDisplayState] = []
 
     private let onCheckNow: () -> Void
     private let onOpenGmail: () -> Void
@@ -36,11 +46,15 @@ final class StatusBarController {
         statusLabelItem.isEnabled = false
         recentHeaderItem.isEnabled = false
         recentHeaderItem.isHidden = true
+        recentHeaderItem2.isEnabled = false
+        recentHeaderItem2.isHidden = true
 
         menu.addItem(statusLabelItem)
         menu.addItem(.separator())
         menu.addItem(recentHeaderItem)
-        // Recent-message items get inserted here dynamically, right after recentHeaderItem.
+        // Section-1 recent-message items get inserted here dynamically, right after recentHeaderItem.
+        menu.addItem(recentHeaderItem2)
+        // Section-2 (second account) recent-message items get inserted here, right after recentHeaderItem2.
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Check Now", action: #selector(checkNowTapped)))
         menu.addItem(makeItem(title: "Open Gmail", action: #selector(openGmailTapped)))
@@ -72,31 +86,8 @@ final class StatusBarController {
         onOpenMessage(message)
     }
 
-    func updateUnreadCount(_ count: Int) {
-        statusItem.button?.image = NSImage(
-            systemSymbolName: count > 0 ? "envelope.fill" : "envelope",
-            accessibilityDescription: "Mail"
-        )
-        statusItem.button?.title = count > 0 ? " \(count)" : ""
-        statusLabelItem.title = count > 0 ? "\(count) unread" : "No unread mail"
-    }
-
     func updateConnectionStatus(_ status: String) {
         statusItem.button?.toolTip = status
-    }
-
-    /// Clears the badge and unread dots immediately, ahead of the IMAP
-    /// round-trip confirming it — the STORE command basically never fails,
-    /// so waiting on the server before updating the UI just reads as lag.
-    /// The next real refresh will reconcile if something did go wrong.
-    func markAllAsReadOptimistically() {
-        updateUnreadCount(0)
-        for item in recentItems {
-            guard let message = item.representedObject as? MailHeader, message.isUnread else { continue }
-            let read = MailHeader(from: message.from, subject: message.subject, messageID: message.messageID, isUnread: false)
-            item.representedObject = read
-            item.attributedTitle = formattedTitle(for: read)
-        }
     }
 
     /// Pops the menu open as if the status item had been clicked — used by
@@ -107,23 +98,98 @@ final class StatusBarController {
         statusItem.button?.performClick(nil)
     }
 
-    func updateRecentMessages(_ messages: [MailHeader]) {
-        for item in recentItems {
+    /// Renders 1 or 2 configured accounts. With 1 account this looks exactly
+    /// like before (plain envelope icon + numeric badge, single "Recent"
+    /// section). With 2, it switches to the dual-badge icon and labels each
+    /// "Recent" section with its account's address so it's clear which
+    /// inbox each message belongs to.
+    func update(accounts: [AccountDisplayState]) {
+        lastAccounts = accounts
+
+        guard !accounts.isEmpty else {
+            statusItem.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Mail")
+            statusItem.button?.title = ""
+            statusLabelItem.title = "Not signed in"
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: [], headerTitle: "Recent")
+            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: [], headerTitle: "")
+            return
+        }
+
+        if accounts.count == 1 {
+            let account = accounts[0]
+            statusItem.button?.image = NSImage(
+                systemSymbolName: account.unreadCount > 0 ? "envelope.fill" : "envelope",
+                accessibilityDescription: "Mail"
+            )
+            statusItem.button?.title = account.unreadCount > 0 ? " \(account.unreadCount)" : ""
+            statusLabelItem.title = account.unreadCount > 0 ? "\(account.unreadCount) unread" : "No unread mail"
+
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: account.recentMessages, headerTitle: "Recent")
+            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: [], headerTitle: "")
+        } else {
+            let primary = accounts.first { $0.slot == .primary } ?? accounts[0]
+            let secondary = accounts.first { $0.slot == .secondary } ?? accounts[1]
+
+            statusItem.button?.image = MenuBarIconRenderer.dualAccountIcon(
+                primaryUnread: primary.unreadCount,
+                secondaryUnread: secondary.unreadCount
+            )
+            statusItem.button?.title = ""
+            let total = primary.unreadCount + secondary.unreadCount
+            statusLabelItem.title = total > 0 ? "\(total) unread total" : "No unread mail"
+
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: primary.recentMessages, headerTitle: primary.email)
+            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: secondary.recentMessages, headerTitle: secondary.email)
+        }
+    }
+
+    /// Clears every badge and unread dot immediately, ahead of the IMAP
+    /// round-trip confirming it — the STORE command basically never fails,
+    /// so waiting on the server before updating the UI just reads as lag.
+    /// The next real refresh will reconcile if something did go wrong.
+    func markAllAsReadOptimistically() {
+        let cleared = lastAccounts.map { account in
+            AccountDisplayState(
+                slot: account.slot,
+                email: account.email,
+                unreadCount: 0,
+                recentMessages: account.recentMessages.map { message in
+                    MailHeader(
+                        from: message.from,
+                        subject: message.subject,
+                        messageID: message.messageID,
+                        isUnread: false,
+                        accountEmail: message.accountEmail
+                    )
+                }
+            )
+        }
+        update(accounts: cleared)
+    }
+
+    private func renderSection(
+        header: NSMenuItem,
+        items: inout [NSMenuItem],
+        messages: [MailHeader],
+        headerTitle: String
+    ) {
+        for item in items {
             menu.removeItem(item)
         }
-        recentItems.removeAll()
+        items.removeAll()
 
-        recentHeaderItem.isHidden = messages.isEmpty
+        header.title = headerTitle
+        header.isHidden = messages.isEmpty
         guard !messages.isEmpty else { return }
 
-        let insertionIndex = menu.index(of: recentHeaderItem) + 1
+        let insertionIndex = menu.index(of: header) + 1
         for (offset, message) in messages.enumerated() {
             let item = NSMenuItem(title: "", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
             item.target = self
             item.attributedTitle = formattedTitle(for: message)
             item.representedObject = message
             menu.insertItem(item, at: insertionIndex + offset)
-            recentItems.append(item)
+            items.append(item)
         }
     }
 

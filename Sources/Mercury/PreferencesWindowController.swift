@@ -3,6 +3,10 @@ import AppKit
 final class PreferencesWindowController: NSWindowController {
     private let emailField = NSTextField()
     private let passwordField = NSSecureTextField()
+    private let email2Field = NSTextField()
+    private let password2Field = NSSecureTextField()
+    private let removeAccount2Button = NSButton(title: "Remove Account 2", target: nil, action: nil)
+
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let previewsCheckbox = NSButton(
         checkboxWithTitle: "Show sender & subject in notifications",
@@ -22,20 +26,23 @@ final class PreferencesWindowController: NSWindowController {
     private let maxCountStepper = NSStepper()
     private let maxCountValueLabel = NSTextField(labelWithString: "")
 
-    private let onSave: (String, String) -> Void
+    private let onSaveAccount: (String, String, AccountSlot) -> Void
+    private let onRemoveAccount: (AccountSlot) -> Void
     private let onShortcutChanged: (UInt32?, UInt32?) -> Void
     private let onDisplaySettingsChanged: () -> Void
 
     init(
-        onSave: @escaping (String, String) -> Void,
+        onSaveAccount: @escaping (String, String, AccountSlot) -> Void,
+        onRemoveAccount: @escaping (AccountSlot) -> Void,
         onShortcutChanged: @escaping (UInt32?, UInt32?) -> Void,
         onDisplaySettingsChanged: @escaping () -> Void
     ) {
-        self.onSave = onSave
+        self.onSaveAccount = onSaveAccount
+        self.onRemoveAccount = onRemoveAccount
         self.onShortcutChanged = onShortcutChanged
         self.onDisplaySettingsChanged = onDisplaySettingsChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 610),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 760),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -53,6 +60,9 @@ final class PreferencesWindowController: NSWindowController {
         guard let contentView = window?.contentView else { return }
         let fieldWidth: CGFloat = 400
 
+        // --- Account 1 ---
+
+        let account1SectionLabel = sectionLabel("Account 1")
         let emailLabel = NSTextField(labelWithString: "Gmail address:")
         let passwordLabel = NSTextField(labelWithString: "App password:")
         let helpLabel = NSTextField(wrappingLabelWithString:
@@ -66,7 +76,47 @@ final class PreferencesWindowController: NSWindowController {
         )
 
         emailField.placeholderString = "you@gmail.com"
-        emailField.stringValue = Credentials.email ?? ""
+        emailField.stringValue = Credentials.email(for: .primary) ?? ""
+
+        let account1Stack = NSStackView(views: [
+            account1SectionLabel, emailLabel, emailField, passwordLabel, passwordField, helpLabel, linkButton
+        ])
+        account1Stack.orientation = .vertical
+        account1Stack.alignment = .leading
+        account1Stack.spacing = 6
+        account1Stack.setCustomSpacing(12, after: account1SectionLabel)
+        account1Stack.setCustomSpacing(14, after: passwordField)
+        account1Stack.setCustomSpacing(2, after: helpLabel)
+
+        // --- Account 2 (optional) ---
+
+        let account2SectionLabel = sectionLabel("Account 2 (optional)")
+        let email2Label = NSTextField(labelWithString: "Gmail address:")
+        let password2Label = NSTextField(labelWithString: "App password:")
+
+        email2Field.placeholderString = "you@gmail.com"
+        email2Field.stringValue = Credentials.email(for: .secondary) ?? ""
+
+        removeAccount2Button.target = self
+        removeAccount2Button.action = #selector(removeAccount2Tapped)
+        removeAccount2Button.bezelStyle = .rounded
+        removeAccount2Button.isHidden = Credentials.email(for: .secondary) == nil
+
+        let account2Stack = NSStackView(views: [
+            account2SectionLabel, email2Label, email2Field, password2Label, password2Field, removeAccount2Button
+        ])
+        account2Stack.orientation = .vertical
+        account2Stack.alignment = .leading
+        account2Stack.spacing = 6
+        account2Stack.setCustomSpacing(12, after: account2SectionLabel)
+        account2Stack.setCustomSpacing(10, after: password2Field)
+
+        let accountStack = NSStackView(views: [account1Stack, account2Stack])
+        accountStack.orientation = .vertical
+        accountStack.alignment = .leading
+        accountStack.spacing = 18
+
+        // --- Options ---
 
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(launchAtLoginToggled)
@@ -90,7 +140,13 @@ final class PreferencesWindowController: NSWindowController {
         shortcutRow.orientation = .horizontal
         shortcutRow.spacing = 8
 
-        // --- Mail behavior section ---
+        let optionsStack = NSStackView(views: [launchAtLoginCheckbox, previewsCheckbox, shortcutLabel, shortcutRow])
+        optionsStack.orientation = .vertical
+        optionsStack.alignment = .leading
+        optionsStack.spacing = 10
+        optionsStack.setCustomSpacing(4, after: previewsCheckbox)
+
+        // --- Mail behavior ---
 
         autoRefreshCheckbox.target = self
         autoRefreshCheckbox.action = #selector(autoRefreshToggled)
@@ -137,23 +193,11 @@ final class PreferencesWindowController: NSWindowController {
         mailBehaviorStack.alignment = .leading
         mailBehaviorStack.spacing = 10
 
+        // --- Save ---
+
         let saveButton = NSButton(title: "Save & Connect", target: self, action: #selector(saveTapped))
         saveButton.keyEquivalent = "\r"
         saveButton.bezelStyle = .rounded
-
-        let accountStack = NSStackView(views: [emailLabel, emailField, passwordLabel, passwordField, helpLabel, linkButton])
-        accountStack.orientation = .vertical
-        accountStack.alignment = .leading
-        accountStack.spacing = 6
-        accountStack.setCustomSpacing(14, after: passwordField)
-        accountStack.setCustomSpacing(2, after: helpLabel)
-
-        let optionsStack = NSStackView(views: [launchAtLoginCheckbox, previewsCheckbox, shortcutLabel, shortcutRow])
-        optionsStack.orientation = .vertical
-        optionsStack.alignment = .leading
-        optionsStack.spacing = 10
-        optionsStack.setCustomSpacing(4, after: previewsCheckbox)
-
         let buttonRow = NSStackView(views: [saveButton])
         buttonRow.orientation = .horizontal
 
@@ -175,8 +219,16 @@ final class PreferencesWindowController: NSWindowController {
 
             emailField.widthAnchor.constraint(equalToConstant: fieldWidth),
             passwordField.widthAnchor.constraint(equalToConstant: fieldWidth),
+            email2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
+            password2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
             helpLabel.widthAnchor.constraint(equalToConstant: fieldWidth)
         ])
+    }
+
+    private func sectionLabel(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.boldSystemFont(ofSize: 12)
+        return label
     }
 
     private func divider(width: CGFloat) -> NSView {
@@ -253,16 +305,32 @@ final class PreferencesWindowController: NSWindowController {
         onDisplaySettingsChanged()
     }
 
+    @objc private func removeAccount2Tapped() {
+        onRemoveAccount(.secondary)
+        email2Field.stringValue = ""
+        password2Field.stringValue = ""
+        removeAccount2Button.isHidden = true
+    }
+
     func show() {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
     @objc private func saveTapped() {
-        let email = emailField.stringValue.trimmingCharacters(in: .whitespaces)
-        let password = passwordField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !email.isEmpty, !password.isEmpty else { return }
-        onSave(email, password)
+        let email1 = emailField.stringValue.trimmingCharacters(in: .whitespaces)
+        let password1 = passwordField.stringValue.trimmingCharacters(in: .whitespaces)
+        if !email1.isEmpty && !password1.isEmpty {
+            onSaveAccount(email1, password1, .primary)
+        }
+
+        let email2 = email2Field.stringValue.trimmingCharacters(in: .whitespaces)
+        let password2 = password2Field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !email2.isEmpty && !password2.isEmpty {
+            onSaveAccount(email2, password2, .secondary)
+            removeAccount2Button.isHidden = false
+        }
+
         window?.close()
     }
 }

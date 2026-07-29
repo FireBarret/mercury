@@ -21,7 +21,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func notifyNewMail(from: String, subject: String, messageID: String?) {
+    func notifyNewMail(from: String, subject: String, messageID: String?, accountEmail: String) {
         let content = UNMutableNotificationContent()
         if Settings.showPreviews {
             content.title = from.isEmpty ? "New Mail" : from
@@ -34,6 +34,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         if let messageID = messageID {
             content.userInfo = ["messageID": messageID]
         }
+        // Only worth labeling which inbox it came from when there's more
+        // than one configured -- otherwise it's just noise.
+        if Credentials.email(for: .secondary) != nil {
+            content.subtitle = accountEmail
+        }
 
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
@@ -44,7 +49,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func sendTestNotification() {
-        notifyNewMail(from: "Mercury", subject: "This is a test notification 🎉", messageID: nil)
+        notifyNewMail(
+            from: "Mercury",
+            subject: "This is a test notification 🎉",
+            messageID: nil,
+            accountEmail: Credentials.email(for: .primary) ?? ""
+        )
     }
 
     func userNotificationCenter(
