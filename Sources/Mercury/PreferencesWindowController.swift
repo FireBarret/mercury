@@ -44,12 +44,12 @@ final class PreferencesWindowController: NSWindowController {
         self.onShortcutChanged = onShortcutChanged
         self.onDisplaySettingsChanged = onDisplaySettingsChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Mercury — Setup"
+        window.title = "Mercury — Preferences"
         window.center()
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -60,6 +60,34 @@ final class PreferencesWindowController: NSWindowController {
 
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
+
+        let tabView = NSTabView()
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+
+        let accountsTab = NSTabViewItem(identifier: "accounts")
+        accountsTab.label = "Accounts"
+        accountsTab.view = buildAccountsTab()
+
+        let generalTab = NSTabViewItem(identifier: "general")
+        generalTab.label = "General"
+        generalTab.view = buildGeneralTab()
+
+        tabView.addTabViewItem(accountsTab)
+        tabView.addTabViewItem(generalTab)
+        contentView.addSubview(tabView)
+
+        NSLayoutConstraint.activate([
+            tabView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            tabView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            tabView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            tabView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
+        ])
+    }
+
+    // MARK: - Accounts tab
+
+    private func buildAccountsTab() -> NSView {
+        let container = NSView()
         let fieldWidth: CGFloat = 400
 
         // --- Account 1 ---
@@ -124,12 +152,45 @@ final class PreferencesWindowController: NSWindowController {
         account2Stack.setCustomSpacing(12, after: account2SectionLabel)
         account2Stack.setCustomSpacing(10, after: password2Field)
 
-        let accountStack = NSStackView(views: [account1Stack, account2Stack])
-        accountStack.orientation = .vertical
-        accountStack.alignment = .leading
-        accountStack.spacing = 18
+        // --- Save (only relevant to this tab -- everything on General applies instantly) ---
 
-        // --- Options ---
+        let saveButton = NSButton(title: "Save & Connect", target: self, action: #selector(saveTapped))
+        saveButton.keyEquivalent = "\r"
+        saveButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [saveButton])
+        buttonRow.orientation = .horizontal
+
+        let mainStack = NSStackView(views: [account1Stack, divider(width: fieldWidth), account2Stack, buttonRow])
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 18
+        mainStack.setCustomSpacing(24, after: account2Stack)
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+            mainStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            mainStack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
+            mainStack.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -16),
+
+            name1Field.widthAnchor.constraint(equalToConstant: fieldWidth),
+            emailField.widthAnchor.constraint(equalToConstant: fieldWidth),
+            passwordField.widthAnchor.constraint(equalToConstant: fieldWidth),
+            name2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
+            email2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
+            password2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
+            helpLabel.widthAnchor.constraint(equalToConstant: fieldWidth)
+        ])
+
+        return container
+    }
+
+    // MARK: - General tab
+
+    private func buildGeneralTab() -> NSView {
+        let container = NSView()
+        let fieldWidth: CGFloat = 400
 
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(launchAtLoginToggled)
@@ -206,38 +267,20 @@ final class PreferencesWindowController: NSWindowController {
         mailBehaviorStack.alignment = .leading
         mailBehaviorStack.spacing = 10
 
-        // --- Save ---
-
-        let saveButton = NSButton(title: "Save & Connect", target: self, action: #selector(saveTapped))
-        saveButton.keyEquivalent = "\r"
-        saveButton.bezelStyle = .rounded
-        let buttonRow = NSStackView(views: [saveButton])
-        buttonRow.orientation = .horizontal
-
-        let mainStack = NSStackView(views: [
-            accountStack, divider(width: fieldWidth), optionsStack, divider(width: fieldWidth),
-            mailBehaviorStack, divider(width: fieldWidth), buttonRow
-        ])
+        let mainStack = NSStackView(views: [optionsStack, divider(width: fieldWidth), mailBehaviorStack])
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
         mainStack.spacing = 18
         mainStack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(mainStack)
+        container.addSubview(mainStack)
 
         NSLayoutConstraint.activate([
-            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
-            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            mainStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
-            mainStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
-
-            name1Field.widthAnchor.constraint(equalToConstant: fieldWidth),
-            emailField.widthAnchor.constraint(equalToConstant: fieldWidth),
-            passwordField.widthAnchor.constraint(equalToConstant: fieldWidth),
-            name2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
-            email2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
-            password2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
-            helpLabel.widthAnchor.constraint(equalToConstant: fieldWidth)
+            mainStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+            mainStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            mainStack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16)
         ])
+
+        return container
     }
 
     private func sectionLabel(_ title: String) -> NSTextField {
