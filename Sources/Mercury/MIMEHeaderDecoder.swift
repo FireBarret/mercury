@@ -45,12 +45,12 @@ func decodeMIMEHeader(_ raw: String) -> String {
 }
 
 private func decodeEncodedWord(charset: String, encoding: String, payload: String) -> String? {
-    let stringEncoding: String.Encoding = charset.uppercased().contains("UTF-8") ? .utf8 : .isoLatin1
+    let stringEncoding = foundationEncoding(forCharset: charset)
 
     switch encoding.uppercased() {
     case "B":
         guard let data = Data(base64Encoded: payload) else { return nil }
-        return String(data: data, encoding: stringEncoding)
+        return String(data: data, encoding: stringEncoding) ?? String(data: data, encoding: .utf8)
     case "Q":
         var bytes: [UInt8] = []
         let chars = Array(payload)
@@ -69,8 +69,34 @@ private func decodeEncodedWord(charset: String, encoding: String, payload: Strin
                 i += 1
             }
         }
-        return String(bytes: bytes, encoding: stringEncoding)
+        return String(bytes: bytes, encoding: stringEncoding) ?? String(bytes: bytes, encoding: .utf8)
     default:
         return nil
+    }
+}
+
+/// Maps a MIME charset name (as seen in RFC 2047 encoded-words) to the
+/// matching Foundation encoding. Beyond UTF-8/Latin-1, this specifically
+/// covers the charsets Japanese mail actually uses -- ISO-2022-JP is the
+/// charset mandated for Japanese email by RFC 1468 and what most Japanese
+/// senders' Subject/From headers are encoded with, not UTF-8.
+private func foundationEncoding(forCharset charset: String) -> String.Encoding {
+    switch charset.uppercased() {
+    case "UTF-8", "UTF8":
+        return .utf8
+    case "ISO-2022-JP":
+        return .iso2022JP
+    case "SHIFT_JIS", "SHIFT-JIS", "SJIS", "CP932", "WINDOWS-31J", "MS932":
+        return .shiftJIS
+    case "EUC-JP", "EUCJP":
+        return .japaneseEUC
+    case "ISO-8859-1", "LATIN1", "LATIN-1":
+        return .isoLatin1
+    case "WINDOWS-1252", "CP1252":
+        return .windowsCP1252
+    case "US-ASCII", "ASCII":
+        return .ascii
+    default:
+        return .utf8
     }
 }
