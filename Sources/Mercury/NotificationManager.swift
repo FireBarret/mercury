@@ -21,7 +21,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func notifyNewMail(from: String, subject: String, messageID: String?, accountEmail: String) {
+    func notifyNewMail(from: String, subject: String, messageID: String?, accountLabel: String) {
         let content = UNMutableNotificationContent()
         if Settings.showPreviews {
             content.title = from.isEmpty ? "New Mail" : from
@@ -37,7 +37,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         // Only worth labeling which inbox it came from when there's more
         // than one configured -- otherwise it's just noise.
         if Credentials.email(for: .secondary) != nil {
-            content.subtitle = accountEmail
+            content.subtitle = accountLabel
         }
 
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
@@ -53,7 +53,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             from: "Mercury",
             subject: "This is a test notification 🎉",
             messageID: nil,
-            accountEmail: Credentials.email(for: .primary) ?? ""
+            accountLabel: Credentials.displayName(for: .primary)
         )
     }
 

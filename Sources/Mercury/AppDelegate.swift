@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         from: message.from,
                         subject: message.subject,
                         messageID: message.messageID,
-                        accountEmail: message.accountEmail
+                        accountLabel: Credentials.displayName(for: slot)
                     )
                 }
             }
@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return AccountDisplayState(
                 slot: slot,
                 email: email,
+                displayName: Credentials.displayName(for: slot),
                 unreadCount: unreadCounts[slot] ?? 0,
                 recentMessages: recentMessages[slot] ?? []
             )
@@ -143,7 +144,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.hotKeyManager.unregister()
                     }
                 },
-                onDisplaySettingsChanged: { [weak self] in self?.imapClients.values.forEach { $0.checkNow() } }
+                onDisplaySettingsChanged: { [weak self] in
+                    // Local-only changes (e.g. a rename) show up immediately by
+                    // re-rendering already-cached data; checkNow() additionally
+                    // covers the min/max-count case, which needs a real refresh
+                    // to actually fetch more or fewer messages.
+                    self?.refreshStatusBar()
+                    self?.imapClients.values.forEach { $0.checkNow() }
+                }
             )
         }
         preferencesWindowController?.show()

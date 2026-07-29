@@ -3,6 +3,7 @@ import AppKit
 struct AccountDisplayState {
     let slot: AccountSlot
     let email: String
+    let displayName: String
     let unreadCount: Int
     let recentMessages: [MailHeader]
 }
@@ -13,6 +14,7 @@ final class StatusBarController {
     private let statusLabelItem = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
     private let recentHeaderItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
     private let recentHeaderItem2 = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let interSectionDivider = NSMenuItem.separator()
     private var recentItems: [NSMenuItem] = []
     private var recentItems2: [NSMenuItem] = []
     private var lastAccounts: [AccountDisplayState] = []
@@ -48,11 +50,13 @@ final class StatusBarController {
         recentHeaderItem.isHidden = true
         recentHeaderItem2.isEnabled = false
         recentHeaderItem2.isHidden = true
+        interSectionDivider.isHidden = true
 
         menu.addItem(statusLabelItem)
         menu.addItem(.separator())
         menu.addItem(recentHeaderItem)
         // Section-1 recent-message items get inserted here dynamically, right after recentHeaderItem.
+        menu.addItem(interSectionDivider)
         menu.addItem(recentHeaderItem2)
         // Section-2 (second account) recent-message items get inserted here, right after recentHeaderItem2.
         menu.addItem(.separator())
@@ -100,9 +104,10 @@ final class StatusBarController {
 
     /// Renders 1 or 2 configured accounts. With 1 account this looks exactly
     /// like before (plain envelope icon + numeric badge, single "Recent"
-    /// section). With 2, it switches to the dual-badge icon and labels each
-    /// "Recent" section with its account's address so it's clear which
-    /// inbox each message belongs to.
+    /// section). With 2, it switches to the dual-badge icon and splits into
+    /// two clearly separated "Recent" sections, each labeled with that
+    /// account's display name (custom, or "Mail 1"/"Mail 2" by default) so
+    /// it's clear which inbox each message belongs to.
     func update(accounts: [AccountDisplayState]) {
         lastAccounts = accounts
 
@@ -112,6 +117,7 @@ final class StatusBarController {
             statusLabelItem.title = "Not signed in"
             renderSection(header: recentHeaderItem, items: &recentItems, messages: [], headerTitle: "Recent")
             renderSection(header: recentHeaderItem2, items: &recentItems2, messages: [], headerTitle: "")
+            interSectionDivider.isHidden = true
             return
         }
 
@@ -126,6 +132,7 @@ final class StatusBarController {
 
             renderSection(header: recentHeaderItem, items: &recentItems, messages: account.recentMessages, headerTitle: "Recent")
             renderSection(header: recentHeaderItem2, items: &recentItems2, messages: [], headerTitle: "")
+            interSectionDivider.isHidden = true
         } else {
             let primary = accounts.first { $0.slot == .primary } ?? accounts[0]
             let secondary = accounts.first { $0.slot == .secondary } ?? accounts[1]
@@ -138,8 +145,9 @@ final class StatusBarController {
             let total = primary.unreadCount + secondary.unreadCount
             statusLabelItem.title = total > 0 ? "\(total) unread total" : "No unread mail"
 
-            renderSection(header: recentHeaderItem, items: &recentItems, messages: primary.recentMessages, headerTitle: primary.email)
-            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: secondary.recentMessages, headerTitle: secondary.email)
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: primary.recentMessages, headerTitle: primary.displayName)
+            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: secondary.recentMessages, headerTitle: secondary.displayName)
+            interSectionDivider.isHidden = false
         }
     }
 
@@ -152,6 +160,7 @@ final class StatusBarController {
             AccountDisplayState(
                 slot: account.slot,
                 email: account.email,
+                displayName: account.displayName,
                 unreadCount: 0,
                 recentMessages: account.recentMessages.map { message in
                     MailHeader(

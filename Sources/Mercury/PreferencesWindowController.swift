@@ -1,8 +1,10 @@
 import AppKit
 
 final class PreferencesWindowController: NSWindowController {
+    private let name1Field = NSTextField()
     private let emailField = NSTextField()
     private let passwordField = NSSecureTextField()
+    private let name2Field = NSTextField()
     private let email2Field = NSTextField()
     private let password2Field = NSSecureTextField()
     private let removeAccount2Button = NSButton(title: "Remove Account 2", target: nil, action: nil)
@@ -63,6 +65,7 @@ final class PreferencesWindowController: NSWindowController {
         // --- Account 1 ---
 
         let account1SectionLabel = sectionLabel("Account 1")
+        let name1Label = NSTextField(labelWithString: "Display name (optional):")
         let emailLabel = NSTextField(labelWithString: "Gmail address:")
         let passwordLabel = NSTextField(labelWithString: "App password:")
         let helpLabel = NSTextField(wrappingLabelWithString:
@@ -75,24 +78,33 @@ final class PreferencesWindowController: NSWindowController {
             url: "https://myaccount.google.com/apppasswords"
         )
 
+        name1Field.placeholderString = Credentials.defaultDisplayName(for: .primary)
+        name1Field.stringValue = Credentials.customDisplayName(for: .primary) ?? ""
+
         emailField.placeholderString = "you@gmail.com"
         emailField.stringValue = Credentials.email(for: .primary) ?? ""
 
         let account1Stack = NSStackView(views: [
-            account1SectionLabel, emailLabel, emailField, passwordLabel, passwordField, helpLabel, linkButton
+            account1SectionLabel, name1Label, name1Field,
+            emailLabel, emailField, passwordLabel, passwordField, helpLabel, linkButton
         ])
         account1Stack.orientation = .vertical
         account1Stack.alignment = .leading
         account1Stack.spacing = 6
         account1Stack.setCustomSpacing(12, after: account1SectionLabel)
+        account1Stack.setCustomSpacing(14, after: name1Field)
         account1Stack.setCustomSpacing(14, after: passwordField)
         account1Stack.setCustomSpacing(2, after: helpLabel)
 
         // --- Account 2 (optional) ---
 
         let account2SectionLabel = sectionLabel("Account 2 (optional)")
+        let name2Label = NSTextField(labelWithString: "Display name (optional):")
         let email2Label = NSTextField(labelWithString: "Gmail address:")
         let password2Label = NSTextField(labelWithString: "App password:")
+
+        name2Field.placeholderString = Credentials.defaultDisplayName(for: .secondary)
+        name2Field.stringValue = Credentials.customDisplayName(for: .secondary) ?? ""
 
         email2Field.placeholderString = "you@gmail.com"
         email2Field.stringValue = Credentials.email(for: .secondary) ?? ""
@@ -103,7 +115,8 @@ final class PreferencesWindowController: NSWindowController {
         removeAccount2Button.isHidden = Credentials.email(for: .secondary) == nil
 
         let account2Stack = NSStackView(views: [
-            account2SectionLabel, email2Label, email2Field, password2Label, password2Field, removeAccount2Button
+            account2SectionLabel, name2Label, name2Field,
+            email2Label, email2Field, password2Label, password2Field, removeAccount2Button
         ])
         account2Stack.orientation = .vertical
         account2Stack.alignment = .leading
@@ -217,8 +230,10 @@ final class PreferencesWindowController: NSWindowController {
             mainStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
             mainStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
 
+            name1Field.widthAnchor.constraint(equalToConstant: fieldWidth),
             emailField.widthAnchor.constraint(equalToConstant: fieldWidth),
             passwordField.widthAnchor.constraint(equalToConstant: fieldWidth),
+            name2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
             email2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
             password2Field.widthAnchor.constraint(equalToConstant: fieldWidth),
             helpLabel.widthAnchor.constraint(equalToConstant: fieldWidth)
@@ -307,9 +322,11 @@ final class PreferencesWindowController: NSWindowController {
 
     @objc private func removeAccount2Tapped() {
         onRemoveAccount(.secondary)
+        name2Field.stringValue = ""
         email2Field.stringValue = ""
         password2Field.stringValue = ""
         removeAccount2Button.isHidden = true
+        onDisplaySettingsChanged()
     }
 
     func show() {
@@ -318,11 +335,17 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     @objc private func saveTapped() {
+        let name1 = name1Field.stringValue.trimmingCharacters(in: .whitespaces)
+        Credentials.setDisplayName(name1.isEmpty ? nil : name1, for: .primary)
+
         let email1 = emailField.stringValue.trimmingCharacters(in: .whitespaces)
         let password1 = passwordField.stringValue.trimmingCharacters(in: .whitespaces)
         if !email1.isEmpty && !password1.isEmpty {
             onSaveAccount(email1, password1, .primary)
         }
+
+        let name2 = name2Field.stringValue.trimmingCharacters(in: .whitespaces)
+        Credentials.setDisplayName(name2.isEmpty ? nil : name2, for: .secondary)
 
         let email2 = email2Field.stringValue.trimmingCharacters(in: .whitespaces)
         let password2 = password2Field.stringValue.trimmingCharacters(in: .whitespaces)
@@ -331,6 +354,7 @@ final class PreferencesWindowController: NSWindowController {
             removeAccount2Button.isHidden = false
         }
 
+        onDisplaySettingsChanged()
         window?.close()
     }
 }

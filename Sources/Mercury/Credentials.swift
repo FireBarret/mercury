@@ -13,11 +13,44 @@ enum Credentials {
     private static let service = "com.mercuryapp.Mercury"
     private static let account1EmailKey = "Mercury.account1Email"
     private static let account2EmailKey = "Mercury.account2Email"
+    private static let account1NameKey = "Mercury.account1Name"
+    private static let account2NameKey = "Mercury.account2Name"
     /// Pre-multi-account key; migrated into account1EmailKey on first read.
     private static let legacyEmailKey = "Mercury.email"
 
     private static func emailKey(for slot: AccountSlot) -> String {
         slot == .primary ? account1EmailKey : account2EmailKey
+    }
+
+    private static func nameKey(for slot: AccountSlot) -> String {
+        slot == .primary ? account1NameKey : account2NameKey
+    }
+
+    static func defaultDisplayName(for slot: AccountSlot) -> String {
+        slot == .primary ? "Mail 1" : "Mail 2"
+    }
+
+    /// The user-chosen name for this slot, or nil if it hasn't been set
+    /// (i.e. it's still using the "Mail 1"/"Mail 2" default). Used to
+    /// pre-fill the Preferences field without showing the default as if
+    /// it were something the user actually typed.
+    static func customDisplayName(for slot: AccountSlot) -> String? {
+        UserDefaults.standard.string(forKey: nameKey(for: slot))
+    }
+
+    /// The name to actually show in the UI -- the custom one if set,
+    /// otherwise "Mail 1"/"Mail 2".
+    static func displayName(for slot: AccountSlot) -> String {
+        customDisplayName(for: slot) ?? defaultDisplayName(for: slot)
+    }
+
+    static func setDisplayName(_ name: String?, for slot: AccountSlot) {
+        let trimmed = name?.trimmingCharacters(in: .whitespaces)
+        if let trimmed = trimmed, !trimmed.isEmpty {
+            UserDefaults.standard.set(trimmed, forKey: nameKey(for: slot))
+        } else {
+            UserDefaults.standard.removeObject(forKey: nameKey(for: slot))
+        }
     }
 
     static func email(for slot: AccountSlot) -> String? {
@@ -44,6 +77,7 @@ enum Credentials {
             deleteAppPassword(for: existingEmail)
         }
         UserDefaults.standard.removeObject(forKey: emailKey(for: slot))
+        UserDefaults.standard.removeObject(forKey: nameKey(for: slot))
     }
 
     static func appPassword(for email: String) -> String? {
