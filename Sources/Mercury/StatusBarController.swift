@@ -22,11 +22,14 @@ final class StatusBarController {
     private var recentItems2: [NSMenuItem] = []
     private var lastAccounts: [AccountDisplayState] = []
 
+    private let pauseNotificationsItem = NSMenuItem(title: "Pause Notifications (1h)", action: nil, keyEquivalent: "")
+
     private let onCheckNow: () -> Void
     private let onOpenGmail: () -> Void
     private let onOpenMessage: (MailHeader) -> Void
     private let onTestNotification: () -> Void
     private let onMarkAllAsRead: () -> Void
+    private let onTogglePauseNotifications: () -> Void
     private let onPreferences: () -> Void
     private let onQuit: () -> Void
 
@@ -35,6 +38,7 @@ final class StatusBarController {
          onOpenMessage: @escaping (MailHeader) -> Void,
          onTestNotification: @escaping () -> Void,
          onMarkAllAsRead: @escaping () -> Void,
+         onTogglePauseNotifications: @escaping () -> Void,
          onPreferences: @escaping () -> Void,
          onQuit: @escaping () -> Void) {
         self.onCheckNow = onCheckNow
@@ -42,6 +46,7 @@ final class StatusBarController {
         self.onOpenMessage = onOpenMessage
         self.onTestNotification = onTestNotification
         self.onMarkAllAsRead = onMarkAllAsRead
+        self.onTogglePauseNotifications = onTogglePauseNotifications
         self.onPreferences = onPreferences
         self.onQuit = onQuit
 
@@ -65,6 +70,9 @@ final class StatusBarController {
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Check Now", action: #selector(checkNowTapped)))
         menu.addItem(makeItem(title: "Open Gmail", action: #selector(openGmailTapped)))
+        pauseNotificationsItem.target = self
+        pauseNotificationsItem.action = #selector(togglePauseNotificationsTapped)
+        menu.addItem(pauseNotificationsItem)
         menu.addItem(makeItem(title: "Send Test Notification", action: #selector(testNotificationTapped)))
         menu.addItem(makeItem(title: "Mark All as Read", action: #selector(markAllAsReadTapped)))
         menu.addItem(.separator())
@@ -85,6 +93,7 @@ final class StatusBarController {
     @objc private func openGmailTapped() { onOpenGmail() }
     @objc private func testNotificationTapped() { onTestNotification() }
     @objc private func markAllAsReadTapped() { onMarkAllAsRead() }
+    @objc private func togglePauseNotificationsTapped() { onTogglePauseNotifications() }
     @objc private func preferencesTapped() { onPreferences() }
     @objc private func quitTapped() { onQuit() }
 
@@ -95,6 +104,10 @@ final class StatusBarController {
 
     func updateConnectionStatus(_ status: String) {
         statusItem.button?.toolTip = status
+    }
+
+    func updatePauseState(isPaused: Bool) {
+        pauseNotificationsItem.title = isPaused ? "Resume Notifications" : "Pause Notifications (1h)"
     }
 
     /// Pops the menu open as if the status item had been clicked — used by
@@ -116,6 +129,7 @@ final class StatusBarController {
     /// account's display name (custom, or "Mail 1"/"Mail 2" by default).
     func update(accounts: [AccountDisplayState]) {
         lastAccounts = accounts
+        let showRecent = Settings.showRecentMessagesInMenu
 
         guard !accounts.isEmpty else {
             statusItem.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Mail")
@@ -137,7 +151,7 @@ final class StatusBarController {
             statusItem.button?.title = account.unreadCount > 0 ? " \(account.unreadCount)" : ""
             statusLabelItem.title = account.unreadCount > 0 ? "\(account.unreadCount) unread" : "No unread mail"
 
-            renderSection(header: recentHeaderItem, items: &recentItems, messages: account.recentMessages, headerTitle: "Recent")
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: showRecent ? account.recentMessages : [], headerTitle: "Recent")
             renderSection(header: recentHeaderItem2, items: &recentItems2, messages: [], headerTitle: "")
             interSectionDivider.isHidden = true
         } else {
@@ -155,9 +169,9 @@ final class StatusBarController {
             let total = primary.unreadCount + secondary.unreadCount
             statusLabelItem.title = total > 0 ? "\(total) unread total" : "No unread mail"
 
-            renderSection(header: recentHeaderItem, items: &recentItems, messages: primary.recentMessages, headerTitle: primary.displayName)
-            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: secondary.recentMessages, headerTitle: secondary.displayName)
-            interSectionDivider.isHidden = false
+            renderSection(header: recentHeaderItem, items: &recentItems, messages: showRecent ? primary.recentMessages : [], headerTitle: primary.displayName)
+            renderSection(header: recentHeaderItem2, items: &recentItems2, messages: showRecent ? secondary.recentMessages : [], headerTitle: secondary.displayName)
+            interSectionDivider.isHidden = !showRecent
         }
     }
 

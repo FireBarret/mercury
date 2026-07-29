@@ -30,7 +30,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             content.title = "New Mail"
             content.body = "You have a new message"
         }
-        content.sound = .default
+        content.sound = Settings.playNotificationSound ? .default : nil
         if let messageID = messageID {
             content.userInfo = ["messageID": messageID]
         }

@@ -8,6 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recentMessages: [AccountSlot: [MailHeader]] = [:]
     private let notificationManager = NotificationManager()
     private let hotKeyManager = GlobalHotKeyManager()
+    private var notificationsPausedUntil: Date?
+
+    private var notificationsPaused: Bool {
+        guard let until = notificationsPausedUntil else { return false }
+        return until > Date()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         notificationManager.requestAuthorization()
@@ -23,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusBarController?.markAllAsReadOptimistically()
                 self?.imapClients.values.forEach { $0.markAllAsRead() }
             },
+            onTogglePauseNotifications: { [weak self] in self?.togglePauseNotifications() },
             onPreferences: { [weak self] in self?.showPreferences() },
             onQuit: { NSApp.terminate(nil) }
         )
@@ -35,6 +42,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let keyCode = Settings.shortcutKeyCode, let modifiers = Settings.shortcutModifiers else { return }
         hotKeyManager.onHotKeyPressed = { [weak self] in self?.statusBarController?.showMenu() }
         hotKeyManager.register(keyCode: keyCode, carbonModifiers: modifiers)
+    }
+
+    /// Toggles a 1-hour notification pause. Only silences banners -- badge
+    /// counts, the recent-message list, and the Mail.app auto-refresh all
+    /// keep working normally, since the point is not missing mail, just not
+    /// being interrupted by it for a while.
+    private func togglePauseNotifications() {
+        if notificationsPaused {
+            notificationsPausedUntil = nil
+        } else {
+            let until = Date().addingTimeInterval(3600)
+            notificationsPausedUntil = until
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3600) { [weak self] in
+                guard let self = self, self.notificationsPausedUntil == until else { return }
+                self.notificationsPausedUntil = nil
+                self.statusBarController?.updatePauseState(isPaused: false)
+            }
+        }
+        statusBarController?.updatePauseState(isPaused: notificationsPaused)
     }
 
     private func openGmail() {
@@ -63,8 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let client = IMAPClient(email: email, appPassword: password)
         client.onNewMail = { [weak self] messages in
             DispatchQueue.main.async {
+                guard let self = self, !self.notificationsPaused, Credentials.notificationsEnabled(for: slot) else { return }
                 for message in messages {
-                    self?.notificationManager.notifyNewMail(
+                    self.notificationManager.notifyNewMail(
                         from: message.from,
                         subject: message.subject,
                         messageID: message.messageID,

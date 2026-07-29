@@ -15,6 +15,8 @@ enum Credentials {
     private static let account2EmailKey = "Mercury.account2Email"
     private static let account1NameKey = "Mercury.account1Name"
     private static let account2NameKey = "Mercury.account2Name"
+    private static let account1NotifyKey = "Mercury.account1NotificationsEnabled"
+    private static let account2NotifyKey = "Mercury.account2NotificationsEnabled"
     /// Pre-multi-account key; migrated into account1EmailKey on first read.
     private static let legacyEmailKey = "Mercury.email"
 
@@ -24,6 +26,23 @@ enum Credentials {
 
     private static func nameKey(for slot: AccountSlot) -> String {
         slot == .primary ? account1NameKey : account2NameKey
+    }
+
+    private static func notifyKey(for slot: AccountSlot) -> String {
+        slot == .primary ? account1NotifyKey : account2NotifyKey
+    }
+
+    /// Whether new mail for this account should trigger a banner
+    /// notification. Independent of the account's unread badge/recent-list
+    /// visibility, which are unaffected by this -- it only silences the
+    /// popup.
+    static func notificationsEnabled(for slot: AccountSlot) -> Bool {
+        if UserDefaults.standard.object(forKey: notifyKey(for: slot)) == nil { return true }
+        return UserDefaults.standard.bool(forKey: notifyKey(for: slot))
+    }
+
+    static func setNotificationsEnabled(_ enabled: Bool, for slot: AccountSlot) {
+        UserDefaults.standard.set(enabled, forKey: notifyKey(for: slot))
     }
 
     static func defaultDisplayName(for slot: AccountSlot) -> String {
@@ -78,6 +97,7 @@ enum Credentials {
         }
         UserDefaults.standard.removeObject(forKey: emailKey(for: slot))
         UserDefaults.standard.removeObject(forKey: nameKey(for: slot))
+        UserDefaults.standard.removeObject(forKey: notifyKey(for: slot))
     }
 
     static func appPassword(for email: String) -> String? {

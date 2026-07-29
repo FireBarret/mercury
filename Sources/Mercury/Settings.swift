@@ -21,6 +21,8 @@ enum Settings {
     private static let recentListMaxCountKey = "Mercury.recentListMaxCount"
     private static let autoRefreshMailAppKey = "Mercury.autoRefreshMailApp"
     private static let openMailActionKey = "Mercury.openMailAction"
+    private static let playNotificationSoundKey = "Mercury.playNotificationSound"
+    private static let showRecentMessagesInMenuKey = "Mercury.showRecentMessagesInMenu"
 
     static var showPreviews: Bool {
         get {
@@ -73,5 +75,21 @@ enum Settings {
             return MailOpenAction(rawValue: raw) ?? .mailApp
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: openMailActionKey) }
+    }
+
+    static var playNotificationSound: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: playNotificationSoundKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: playNotificationSoundKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: playNotificationSoundKey) }
+    }
+
+    static var showRecentMessagesInMenu: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: showRecentMessagesInMenuKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: showRecentMessagesInMenuKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: showRecentMessagesInMenuKey) }
     }
 }

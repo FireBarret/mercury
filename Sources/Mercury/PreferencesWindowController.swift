@@ -8,10 +8,22 @@ final class PreferencesWindowController: NSWindowController {
     private let email2Field = NSTextField()
     private let password2Field = NSSecureTextField()
     private let removeAccount2Button = NSButton(title: "Remove Account 2", target: nil, action: nil)
+    private let notify1Checkbox = NSButton(checkboxWithTitle: "Notify for new mail", target: nil, action: nil)
+    private let notify2Checkbox = NSButton(checkboxWithTitle: "Notify for new mail", target: nil, action: nil)
 
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let previewsCheckbox = NSButton(
         checkboxWithTitle: "Show sender & subject in notifications",
+        target: nil,
+        action: nil
+    )
+    private let playSoundCheckbox = NSButton(
+        checkboxWithTitle: "Play sound for notifications",
+        target: nil,
+        action: nil
+    )
+    private let showRecentCheckbox = NSButton(
+        checkboxWithTitle: "Show recent messages in menu",
         target: nil,
         action: nil
     )
@@ -112,9 +124,13 @@ final class PreferencesWindowController: NSWindowController {
         emailField.placeholderString = "you@gmail.com"
         emailField.stringValue = Credentials.email(for: .primary) ?? ""
 
+        notify1Checkbox.target = self
+        notify1Checkbox.action = #selector(notify1Toggled)
+        notify1Checkbox.state = Credentials.notificationsEnabled(for: .primary) ? .on : .off
+
         let account1Stack = NSStackView(views: [
             account1SectionLabel, name1Label, name1Field,
-            emailLabel, emailField, passwordLabel, passwordField, helpLabel, linkButton
+            emailLabel, emailField, passwordLabel, passwordField, notify1Checkbox, helpLabel, linkButton
         ])
         account1Stack.orientation = .vertical
         account1Stack.alignment = .leading
@@ -122,6 +138,7 @@ final class PreferencesWindowController: NSWindowController {
         account1Stack.setCustomSpacing(12, after: account1SectionLabel)
         account1Stack.setCustomSpacing(14, after: name1Field)
         account1Stack.setCustomSpacing(14, after: passwordField)
+        account1Stack.setCustomSpacing(10, after: notify1Checkbox)
         account1Stack.setCustomSpacing(2, after: helpLabel)
 
         // --- Account 2 (optional) ---
@@ -137,6 +154,10 @@ final class PreferencesWindowController: NSWindowController {
         email2Field.placeholderString = "you@gmail.com"
         email2Field.stringValue = Credentials.email(for: .secondary) ?? ""
 
+        notify2Checkbox.target = self
+        notify2Checkbox.action = #selector(notify2Toggled)
+        notify2Checkbox.state = Credentials.notificationsEnabled(for: .secondary) ? .on : .off
+
         removeAccount2Button.target = self
         removeAccount2Button.action = #selector(removeAccount2Tapped)
         removeAccount2Button.bezelStyle = .rounded
@@ -144,13 +165,14 @@ final class PreferencesWindowController: NSWindowController {
 
         let account2Stack = NSStackView(views: [
             account2SectionLabel, name2Label, name2Field,
-            email2Label, email2Field, password2Label, password2Field, removeAccount2Button
+            email2Label, email2Field, password2Label, password2Field, notify2Checkbox, removeAccount2Button
         ])
         account2Stack.orientation = .vertical
         account2Stack.alignment = .leading
         account2Stack.spacing = 6
         account2Stack.setCustomSpacing(12, after: account2SectionLabel)
         account2Stack.setCustomSpacing(10, after: password2Field)
+        account2Stack.setCustomSpacing(10, after: notify2Checkbox)
 
         // --- Save (only relevant to this tab -- everything on General applies instantly) ---
 
@@ -200,6 +222,10 @@ final class PreferencesWindowController: NSWindowController {
         previewsCheckbox.action = #selector(previewsToggled)
         previewsCheckbox.state = Settings.showPreviews ? .on : .off
 
+        playSoundCheckbox.target = self
+        playSoundCheckbox.action = #selector(playSoundToggled)
+        playSoundCheckbox.state = Settings.playNotificationSound ? .on : .off
+
         let shortcutLabel = NSTextField(labelWithString: "Open menu shortcut:")
         if let keyCode = Settings.shortcutKeyCode, let modifiers = Settings.shortcutModifiers {
             let flags = ShortcutRecorderView.modifierFlags(fromCarbon: modifiers)
@@ -214,13 +240,19 @@ final class PreferencesWindowController: NSWindowController {
         shortcutRow.orientation = .horizontal
         shortcutRow.spacing = 8
 
-        let optionsStack = NSStackView(views: [launchAtLoginCheckbox, previewsCheckbox, shortcutLabel, shortcutRow])
+        let optionsStack = NSStackView(views: [
+            launchAtLoginCheckbox, previewsCheckbox, playSoundCheckbox, shortcutLabel, shortcutRow
+        ])
         optionsStack.orientation = .vertical
         optionsStack.alignment = .leading
         optionsStack.spacing = 10
         optionsStack.setCustomSpacing(4, after: previewsCheckbox)
 
         // --- Mail behavior ---
+
+        showRecentCheckbox.target = self
+        showRecentCheckbox.action = #selector(showRecentToggled)
+        showRecentCheckbox.state = Settings.showRecentMessagesInMenu ? .on : .off
 
         autoRefreshCheckbox.target = self
         autoRefreshCheckbox.action = #selector(autoRefreshToggled)
@@ -262,7 +294,9 @@ final class PreferencesWindowController: NSWindowController {
         maxCountRow.orientation = .horizontal
         maxCountRow.spacing = 6
 
-        let mailBehaviorStack = NSStackView(views: [autoRefreshCheckbox, openInRow, minCountRow, maxCountRow])
+        let mailBehaviorStack = NSStackView(views: [
+            showRecentCheckbox, autoRefreshCheckbox, openInRow, minCountRow, maxCountRow
+        ])
         mailBehaviorStack.orientation = .vertical
         mailBehaviorStack.alignment = .leading
         mailBehaviorStack.spacing = 10
@@ -321,6 +355,23 @@ final class PreferencesWindowController: NSWindowController {
 
     @objc private func previewsToggled() {
         Settings.showPreviews = (previewsCheckbox.state == .on)
+    }
+
+    @objc private func playSoundToggled() {
+        Settings.playNotificationSound = (playSoundCheckbox.state == .on)
+    }
+
+    @objc private func showRecentToggled() {
+        Settings.showRecentMessagesInMenu = (showRecentCheckbox.state == .on)
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func notify1Toggled() {
+        Credentials.setNotificationsEnabled(notify1Checkbox.state == .on, for: .primary)
+    }
+
+    @objc private func notify2Toggled() {
+        Credentials.setNotificationsEnabled(notify2Checkbox.state == .on, for: .secondary)
     }
 
     @objc private func clearShortcutTapped() {
