@@ -112,11 +112,6 @@ final class StatusBarController {
     @objc private func preferencesTapped() { onPreferences() }
     @objc private func quitTapped() { onQuit() }
 
-    @objc private func recentItemTapped(_ sender: NSMenuItem) {
-        guard let message = sender.representedObject as? MailHeader else { return }
-        onOpenMessageInGmail(message)
-    }
-
     @objc private func openInGmailTapped(_ sender: NSMenuItem) {
         guard let message = sender.representedObject as? MailHeader else { return }
         onOpenMessageInGmail(message)
@@ -273,33 +268,20 @@ final class StatusBarController {
         header.isHidden = messages.isEmpty
         guard !messages.isEmpty else { return }
 
-        // A submenu-bearing NSMenuItem can't also fire its own click action
-        // (AppKit routes clicks on it to opening the submenu instead), so a
-        // single row can't both open directly on click AND reveal a hover
-        // submenu -- that split needs two items. The row stays a plain
-        // clickable item (click = open in Gmail); a compact "•••" sibling
-        // right after it carries the submenu for everything else, instead
-        // of the wordier "Quick Actions" label this used before.
+        // Back to one item per message: the submenu lives directly on the
+        // row again, so hovering it reveals the actions to the side
+        // (native NSMenuItem/submenu behavior). AppKit doesn't let a
+        // submenu-bearing item also fire its own click, so opening the
+        // message lives inside the submenu itself (as two explicit
+        // choices) rather than as a direct click on the row.
         let insertionIndex = menu.index(of: header) + 1
-        var offset = 0
-        for message in messages {
-            let item = NSMenuItem(title: "", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
-            item.target = self
+        for (offset, message) in messages.enumerated() {
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = formattedTitle(for: message)
             item.representedObject = message
+            item.submenu = quickActionsSubmenu(for: message)
             menu.insertItem(item, at: insertionIndex + offset)
             items.append(item)
-            offset += 1
-
-            let moreItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            moreItem.attributedTitle = NSAttributedString(string: "    •••", attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ])
-            moreItem.submenu = quickActionsSubmenu(for: message)
-            menu.insertItem(moreItem, at: insertionIndex + offset)
-            items.append(moreItem)
-            offset += 1
         }
     }
 
@@ -309,31 +291,35 @@ final class StatusBarController {
         let openMailAppItem = NSMenuItem(title: "Open in Mail.app", action: #selector(openInMailAppTapped(_:)), keyEquivalent: "")
         openMailAppItem.target = self
         openMailAppItem.representedObject = message
+        openMailAppItem.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: nil)
         submenu.addItem(openMailAppItem)
 
         let openGmailItem = NSMenuItem(title: "Open in Gmail", action: #selector(openInGmailTapped(_:)), keyEquivalent: "")
         openGmailItem.target = self
         openGmailItem.representedObject = message
+        openGmailItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         submenu.addItem(openGmailItem)
 
         submenu.addItem(.separator())
 
-        let flagItem = NSMenuItem(title: "", action: #selector(flagTapped(_:)), keyEquivalent: "")
+        let flagItem = NSMenuItem(
+            title: message.isFlagged ? "Remove Flag" : "Flag",
+            action: #selector(flagTapped(_:)),
+            keyEquivalent: ""
+        )
         flagItem.target = self
         flagItem.representedObject = message
-        flagItem.attributedTitle = coloredActionTitle(
-            message.isFlagged ? "Remove Flag" : "Flag",
-            color: .systemOrange
-        )
+        flagItem.image = tintedSymbol("flag.fill", color: .systemOrange)
         submenu.addItem(flagItem)
 
-        let readItem = NSMenuItem(title: "", action: #selector(markReadTapped(_:)), keyEquivalent: "")
+        let readItem = NSMenuItem(
+            title: message.isUnread ? "Mark as Read" : "Mark as Unread",
+            action: #selector(markReadTapped(_:)),
+            keyEquivalent: ""
+        )
         readItem.target = self
         readItem.representedObject = message
-        readItem.attributedTitle = coloredActionTitle(
-            message.isUnread ? "Mark as Read" : "Mark as Unread",
-            color: .systemBlue
-        )
+        readItem.image = tintedSymbol(message.isUnread ? "envelope.open.fill" : "envelope.fill", color: .systemBlue)
         submenu.addItem(readItem)
 
         submenu.addItem(.separator())
@@ -341,24 +327,25 @@ final class StatusBarController {
         let copyCodeItem = NSMenuItem(title: "Copy Code", action: #selector(copyCodeTapped(_:)), keyEquivalent: "")
         copyCodeItem.target = self
         copyCodeItem.representedObject = message
+        copyCodeItem.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
         submenu.addItem(copyCodeItem)
 
         let checkLinksItem = NSMenuItem(title: "Check for Links", action: #selector(checkLinksTapped(_:)), keyEquivalent: "")
         checkLinksItem.target = self
         checkLinksItem.representedObject = message
+        checkLinksItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
         submenu.addItem(checkLinksItem)
 
         return submenu
     }
 
-    private func coloredActionTitle(_ text: String, color: NSColor) -> NSAttributedString {
-        let result = NSMutableAttributedString(string: "● ", attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .black),
-            .foregroundColor: color,
-            .baselineOffset: 1
-        ])
-        result.append(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)]))
-        return result
+    /// A monochrome SF Symbol tinted a specific color, for menu items where
+    /// the color itself carries meaning (orange = flag, matching Mail.app's
+    /// own flag color; blue = read/unread, matching its unread dot).
+    private func tintedSymbol(_ name: String, color: NSColor) -> NSImage? {
+        guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
+        let config = NSImage.SymbolConfiguration(paletteColors: [color])
+        return base.withSymbolConfiguration(config)
     }
 
     @objc private func flagTapped(_ sender: NSMenuItem) {
