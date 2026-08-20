@@ -99,8 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
             }
-            if !messages.isEmpty && Settings.autoRefreshMailApp {
-                MailAppRefresher.refreshAndCloseIfNeeded()
+            if !messages.isEmpty {
+                MailAppRefresher.refresh()
             }
         }
         client.onUnreadCountChanged = { [weak self] count in

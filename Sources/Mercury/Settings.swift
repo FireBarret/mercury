@@ -12,6 +12,30 @@ enum MailOpenAction: String, CaseIterable {
     }
 }
 
+enum MailAppRefreshMode: String, CaseIterable {
+    /// Launch it if needed, tell it to check for new mail, then quit it
+    /// again -- but only if it wasn't already running.
+    case quitAfterRefresh
+    /// Launch it if needed, tell it to check for new mail, then hide it
+    /// (like Cmd+H) instead of quitting -- only the first time; after that
+    /// it just stays running hidden, so later refreshes skip the relaunch.
+    case hideAfterRefresh
+    /// Never launches Mail.app. If it's already open (however the user
+    /// left it), just tells it to check for new mail.
+    case refreshIfAlreadyOpen
+    /// Don't touch Mail.app at all.
+    case disabled
+
+    var displayName: String {
+        switch self {
+        case .quitAfterRefresh: return "Open, refresh, then close"
+        case .hideAfterRefresh: return "Open, refresh, then hide"
+        case .refreshIfAlreadyOpen: return "Refresh only if already open"
+        case .disabled: return "Do nothing"
+        }
+    }
+}
+
 /// Small persisted preferences, independent of the account credentials.
 enum Settings {
     private static let showPreviewsKey = "Mercury.showPreviews"
@@ -20,6 +44,7 @@ enum Settings {
     private static let recentListMinCountKey = "Mercury.recentListMinCount"
     private static let recentListMaxCountKey = "Mercury.recentListMaxCount"
     private static let autoRefreshMailAppKey = "Mercury.autoRefreshMailApp"
+    private static let mailAppRefreshModeKey = "Mercury.mailAppRefreshMode"
     private static let openMailActionKey = "Mercury.openMailAction"
     private static let playNotificationSoundKey = "Mercury.playNotificationSound"
     private static let showRecentMessagesInMenuKey = "Mercury.showRecentMessagesInMenu"
@@ -61,12 +86,25 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: recentListMaxCountKey) }
     }
 
-    static var autoRefreshMailApp: Bool {
+    /// Replaces the old on/off `autoRefreshMailApp` toggle with 4 modes.
+    /// Migrates a previously-set boolean once: on -> .hideAfterRefresh (the
+    /// new nicer default, not the old quit behavior), off -> .disabled.
+    static var mailAppRefreshMode: MailAppRefreshMode {
         get {
-            if UserDefaults.standard.object(forKey: autoRefreshMailAppKey) == nil { return true }
-            return UserDefaults.standard.bool(forKey: autoRefreshMailAppKey)
+            if let raw = UserDefaults.standard.string(forKey: mailAppRefreshModeKey),
+               let mode = MailAppRefreshMode(rawValue: raw) {
+                return mode
+            }
+            if UserDefaults.standard.object(forKey: autoRefreshMailAppKey) != nil {
+                let wasEnabled = UserDefaults.standard.bool(forKey: autoRefreshMailAppKey)
+                let migrated: MailAppRefreshMode = wasEnabled ? .hideAfterRefresh : .disabled
+                UserDefaults.standard.set(migrated.rawValue, forKey: mailAppRefreshModeKey)
+                UserDefaults.standard.removeObject(forKey: autoRefreshMailAppKey)
+                return migrated
+            }
+            return .hideAfterRefresh
         }
-        set { UserDefaults.standard.set(newValue, forKey: autoRefreshMailAppKey) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: mailAppRefreshModeKey) }
     }
 
     static var openMailAction: MailOpenAction {

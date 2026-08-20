@@ -29,11 +29,7 @@ final class PreferencesWindowController: NSWindowController {
     )
     private let shortcutRecorder = ShortcutRecorderView()
 
-    private let autoRefreshCheckbox = NSButton(
-        checkboxWithTitle: "Automatically refresh Mail.app when new mail arrives",
-        target: nil,
-        action: nil
-    )
+    private let mailAppRefreshPopUp = NSPopUpButton()
     private let openInPopUp = NSPopUpButton()
     private let minCountStepper = NSStepper()
     private let minCountValueLabel = NSTextField(labelWithString: "")
@@ -254,9 +250,17 @@ final class PreferencesWindowController: NSWindowController {
         showRecentCheckbox.action = #selector(showRecentToggled)
         showRecentCheckbox.state = Settings.showRecentMessagesInMenu ? .on : .off
 
-        autoRefreshCheckbox.target = self
-        autoRefreshCheckbox.action = #selector(autoRefreshToggled)
-        autoRefreshCheckbox.state = Settings.autoRefreshMailApp ? .on : .off
+        let mailAppRefreshLabel = NSTextField(labelWithString: "When new mail arrives:")
+        mailAppRefreshPopUp.removeAllItems()
+        mailAppRefreshPopUp.addItems(withTitles: MailAppRefreshMode.allCases.map { $0.displayName })
+        if let index = MailAppRefreshMode.allCases.firstIndex(of: Settings.mailAppRefreshMode) {
+            mailAppRefreshPopUp.selectItem(at: index)
+        }
+        mailAppRefreshPopUp.target = self
+        mailAppRefreshPopUp.action = #selector(mailAppRefreshModeChanged)
+        let mailAppRefreshRow = NSStackView(views: [mailAppRefreshLabel, mailAppRefreshPopUp])
+        mailAppRefreshRow.orientation = .horizontal
+        mailAppRefreshRow.spacing = 8
 
         let openInLabel = NSTextField(labelWithString: "Open messages in:")
         openInPopUp.removeAllItems()
@@ -295,7 +299,7 @@ final class PreferencesWindowController: NSWindowController {
         maxCountRow.spacing = 6
 
         let mailBehaviorStack = NSStackView(views: [
-            showRecentCheckbox, autoRefreshCheckbox, openInRow, minCountRow, maxCountRow
+            showRecentCheckbox, mailAppRefreshRow, openInRow, minCountRow, maxCountRow
         ])
         mailBehaviorStack.orientation = .vertical
         mailBehaviorStack.alignment = .leading
@@ -379,8 +383,11 @@ final class PreferencesWindowController: NSWindowController {
         onShortcutChanged(nil, nil)
     }
 
-    @objc private func autoRefreshToggled() {
-        Settings.autoRefreshMailApp = (autoRefreshCheckbox.state == .on)
+    @objc private func mailAppRefreshModeChanged() {
+        let index = mailAppRefreshPopUp.indexOfSelectedItem
+        let modes = MailAppRefreshMode.allCases
+        guard index >= 0, index < modes.count else { return }
+        Settings.mailAppRefreshMode = modes[index]
     }
 
     @objc private func openInChanged() {
