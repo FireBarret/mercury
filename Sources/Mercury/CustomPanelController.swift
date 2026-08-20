@@ -225,26 +225,21 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
                     messagesStack.setCustomSpacing(12, after: previous)
                 }
                 messagesStack.addArrangedSubview(paddedHeader)
-                // NSStackView's .width alignment doesn't reliably propagate
-                // through a nested stack the way a single-level stack does
-                // -- pinning explicitly is what actually guarantees these
-                // fill the panel's width instead of just hugging their own
-                // content (the bug that made rows render at roughly half
-                // width, right-hugged, in the first real test).
-                NSLayoutConstraint.activate([
-                    paddedHeader.leadingAnchor.constraint(equalTo: messagesStack.leadingAnchor),
-                    paddedHeader.trailingAnchor.constraint(equalTo: messagesStack.trailingAnchor)
-                ])
+                // padded() already pins the container to panelWidth, so the
+                // header needs no further width constraint of its own.
                 messagesStack.setCustomSpacing(4, after: paddedHeader)
             }
             for message in account.recentMessages {
                 let row = SwipeableMessageRowView(message: message, attributedText: formattedTitle(for: message))
                 row.translatesAutoresizingMaskIntoConstraints = false
                 row.heightAnchor.constraint(equalToConstant: 50).isActive = true
-                NSLayoutConstraint.activate([
-                    row.leadingAnchor.constraint(equalTo: messagesStack.leadingAnchor),
-                    row.trailingAnchor.constraint(equalTo: messagesStack.trailingAnchor)
-                ])
+                // A plain width constant rather than pinning to
+                // messagesStack's anchors: cross-view constraints require a
+                // common ancestor, and the row isn't added to the stack
+                // until a few lines below -- activating them here threw and
+                // aborted the app the moment IMAP delivered its first batch
+                // of messages. A constant can't have that failure mode.
+                row.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
                 row.onTapOpen = { MessageOpener.open(messageID: message.messageID) }
                 row.onAction = { [weak self] action in self?.perform(action, on: message) }
                 messagesStack.addArrangedSubview(row)
