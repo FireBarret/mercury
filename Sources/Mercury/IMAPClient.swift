@@ -2,10 +2,12 @@ import Foundation
 import Network
 
 struct MailHeader {
+    let uid: Int?
     let from: String
     let subject: String
     let messageID: String?
     let isUnread: Bool
+    let isFlagged: Bool
     let accountEmail: String
 }
 
@@ -50,6 +52,12 @@ final class IMAPClient {
     private var reconnectAttempt = 0
     private var wakeRequested = false
     private var markAllAsReadRequested = false
+    private var pendingActions: [PendingAction] = []
+
+    private enum PendingAction {
+        case setFlag(uid: Int, flag: String, on: Bool)
+        case fetchBody(uid: Int, completion: (String?) -> Void)
+    }
 
     var onNewMail: (([MailHeader]) -> Void)?
     var onUnreadCountChanged: ((Int) -> Void)?
@@ -89,6 +97,27 @@ final class IMAPClient {
     func markAllAsRead() {
         cond.lock()
         markAllAsReadRequested = true
+        cond.signal()
+        cond.unlock()
+    }
+
+    /// Sets or clears a single IMAP flag (e.g. "\\Flagged", "\\Seen") on one
+    /// message, identified by its stable UID rather than a sequence number
+    /// (which can shift as the mailbox changes).
+    func setFlag(uid: Int, flag: String, on: Bool) {
+        cond.lock()
+        pendingActions.append(.setFlag(uid: uid, flag: flag, on: on))
+        cond.signal()
+        cond.unlock()
+    }
+
+    /// Fetches the full raw message (headers + body) for one UID, for
+    /// on-demand actions like OTP/link extraction. Not prefetched for every
+    /// recent message -- only called when the user actually asks for it.
+    /// The completion is always called on the main thread.
+    func fetchMessageBody(uid: Int, completion: @escaping (String?) -> Void) {
+        cond.lock()
+        pendingActions.append(.fetchBody(uid: uid, completion: completion))
         cond.signal()
         cond.unlock()
     }
@@ -351,23 +380,32 @@ final class IMAPClient {
     private func fetchHeaders(from: Int, to: Int) throws -> [MailHeader] {
         guard from <= to else { return [] }
         let tag = nextTag()
-        try writeLine("\(tag) FETCH \(from):\(to) (FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
+        try writeLine("\(tag) FETCH \(from):\(to) (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
         let lines = try readUntilTagged(tag)
         var headers: [MailHeader] = []
         for line in lines where line.contains("FETCH") && line.contains("\n") {
             // Our readLogicalLine joins "<head>\n<literal + trailer>" for lines with literals.
-            // FLAGS is requested first, so it lands in the part before the literal.
+            // UID and FLAGS are requested first, so both land in the part before the literal.
             let parts = line.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
             let metaPart = String(parts[0])
             let headerBlock = String(parts[1])
             let isUnread = !metaPart.contains("\\Seen")
-            headers.append(parseHeaderBlock(headerBlock, isUnread: isUnread))
+            let isFlagged = metaPart.contains("\\Flagged")
+            let uid = parseUID(metaPart)
+            headers.append(parseHeaderBlock(headerBlock, uid: uid, isUnread: isUnread, isFlagged: isFlagged))
         }
         return headers
     }
 
-    private func parseHeaderBlock(_ block: String, isUnread: Bool) -> MailHeader {
+    private func parseUID(_ metaPart: String) -> Int? {
+        guard let range = metaPart.range(of: #"UID (\d+)"#, options: .regularExpression) else { return nil }
+        let match = metaPart[range]
+        guard let numRange = match.range(of: #"\d+"#, options: .regularExpression) else { return nil }
+        return Int(match[numRange])
+    }
+
+    private func parseHeaderBlock(_ block: String, uid: Int?, isUnread: Bool, isFlagged: Bool) -> MailHeader {
         var from = ""
         var subject = ""
         var messageID: String?
@@ -391,10 +429,12 @@ final class IMAPClient {
             }
         }
         return MailHeader(
+            uid: uid,
             from: prettifyFrom(from),
             subject: subject,
             messageID: messageID,
             isUnread: isUnread,
+            isFlagged: isFlagged,
             accountEmail: email
         )
     }
@@ -462,11 +502,12 @@ final class IMAPClient {
             cond.lock()
             let woken = wakeRequested
             let markRequested = markAllAsReadRequested
+            let hasActions = !pendingActions.isEmpty
             if woken { wakeRequested = false }
             if markRequested { markAllAsReadRequested = false }
             cond.unlock()
             if markRequested { shouldMarkAllRead = true }
-            if woken || markRequested || Date() >= idleDeadline {
+            if woken || markRequested || hasActions || Date() >= idleDeadline {
                 break idleWait
             }
         }
@@ -476,6 +517,14 @@ final class IMAPClient {
 
         if shouldMarkAllRead {
             try markAllMessagesRead()
+        }
+
+        cond.lock()
+        let actionsToProcess = pendingActions
+        pendingActions.removeAll()
+        cond.unlock()
+        for action in actionsToProcess {
+            processPendingAction(action)
         }
 
         let known = knownMessageCount ?? 0
@@ -512,6 +561,50 @@ final class IMAPClient {
         DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak self] in
             self?.checkNow()
         }
+    }
+
+    /// Processes one queued per-message action. Deliberately swallows its
+    /// own errors (logged, not thrown) -- a failed flag-set or body fetch
+    /// shouldn't tear down the whole IDLE session the way a real protocol
+    /// error should.
+    private func processPendingAction(_ action: PendingAction) {
+        switch action {
+        case .setFlag(let uid, let flag, let on):
+            do {
+                let tag = nextTag()
+                let sign = on ? "+FLAGS" : "-FLAGS"
+                try writeLine("\(tag) UID STORE \(uid) \(sign) (\(flag))")
+                _ = try readUntilTagged(tag)
+            } catch {
+                NSLog("IMAPClient: setFlag(uid: \(uid), flag: \(flag)) failed: \(error)")
+            }
+        case .fetchBody(let uid, let completion):
+            var result: String?
+            do {
+                result = try fetchRawBody(uid: uid)
+            } catch {
+                NSLog("IMAPClient: fetchMessageBody(uid: \(uid)) failed: \(error)")
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Fetches the complete raw message (headers + body) for one UID. Not
+    /// surgical about MIME parts -- for the on-demand OTP/link-scan use
+    /// case this is simplest and correct for typical small notification/
+    /// OTP emails, at the cost of being slow for anything with large
+    /// attachments (BODY.PEEK[] pulls the whole thing, attachments
+    /// included).
+    private func fetchRawBody(uid: Int) throws -> String? {
+        let tag = nextTag()
+        try writeLine("\(tag) UID FETCH \(uid) (BODY.PEEK[])")
+        let lines = try readUntilTagged(tag)
+        for line in lines where line.contains("FETCH") && line.contains("\n") {
+            let parts = line.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            return String(parts[1])
+        }
+        return nil
     }
 
     private func markAllMessagesRead() throws {

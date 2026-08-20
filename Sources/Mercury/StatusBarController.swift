@@ -30,6 +30,10 @@ final class StatusBarController {
     private let onTestNotification: () -> Void
     private let onMarkAllAsRead: () -> Void
     private let onTogglePauseNotifications: () -> Void
+    private let onFlagMessage: (MailHeader, Bool) -> Void
+    private let onMarkReadMessage: (MailHeader, Bool) -> Void
+    private let onCopyCode: (MailHeader) -> Void
+    private let onCheckLinks: (MailHeader) -> Void
     private let onPreferences: () -> Void
     private let onQuit: () -> Void
 
@@ -39,6 +43,10 @@ final class StatusBarController {
          onTestNotification: @escaping () -> Void,
          onMarkAllAsRead: @escaping () -> Void,
          onTogglePauseNotifications: @escaping () -> Void,
+         onFlagMessage: @escaping (MailHeader, Bool) -> Void,
+         onMarkReadMessage: @escaping (MailHeader, Bool) -> Void,
+         onCopyCode: @escaping (MailHeader) -> Void,
+         onCheckLinks: @escaping (MailHeader) -> Void,
          onPreferences: @escaping () -> Void,
          onQuit: @escaping () -> Void) {
         self.onCheckNow = onCheckNow
@@ -47,6 +55,10 @@ final class StatusBarController {
         self.onTestNotification = onTestNotification
         self.onMarkAllAsRead = onMarkAllAsRead
         self.onTogglePauseNotifications = onTogglePauseNotifications
+        self.onFlagMessage = onFlagMessage
+        self.onMarkReadMessage = onMarkReadMessage
+        self.onCopyCode = onCopyCode
+        self.onCheckLinks = onCheckLinks
         self.onPreferences = onPreferences
         self.onQuit = onQuit
 
@@ -219,10 +231,12 @@ final class StatusBarController {
                 unreadCount: 0,
                 recentMessages: account.recentMessages.map { message in
                     MailHeader(
+                        uid: message.uid,
                         from: message.from,
                         subject: message.subject,
                         messageID: message.messageID,
                         isUnread: false,
+                        isFlagged: message.isFlagged,
                         accountEmail: message.accountEmail
                     )
                 }
@@ -246,15 +260,121 @@ final class StatusBarController {
         header.isHidden = messages.isEmpty
         guard !messages.isEmpty else { return }
 
+        // Each message gets two menu items: the row itself (click opens the
+        // message -- unchanged from before) and a "Quick Actions" sibling
+        // right below it carrying the 4 actions as a submenu. A submenu
+        // can't live directly on the row's own item without losing its
+        // click-to-open behavior (AppKit routes clicks on a submenu-bearing
+        // item to opening the submenu, not to the item's action), so this
+        // keeps both working at the cost of the Recent list getting twice
+        // as many rows.
         let insertionIndex = menu.index(of: header) + 1
-        for (offset, message) in messages.enumerated() {
+        var offset = 0
+        for message in messages {
             let item = NSMenuItem(title: "", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
             item.target = self
             item.attributedTitle = formattedTitle(for: message)
             item.representedObject = message
             menu.insertItem(item, at: insertionIndex + offset)
             items.append(item)
+            offset += 1
+
+            let actionsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            actionsItem.attributedTitle = NSAttributedString(string: "    Quick Actions", attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ])
+            actionsItem.submenu = quickActionsSubmenu(for: message)
+            menu.insertItem(actionsItem, at: insertionIndex + offset)
+            items.append(actionsItem)
+            offset += 1
         }
+    }
+
+    private func quickActionsSubmenu(for message: MailHeader) -> NSMenu {
+        let submenu = NSMenu()
+
+        let flagItem = NSMenuItem(title: "", action: #selector(flagTapped(_:)), keyEquivalent: "")
+        flagItem.target = self
+        flagItem.representedObject = message
+        flagItem.attributedTitle = coloredActionTitle(
+            message.isFlagged ? "Remove Flag" : "Flag",
+            color: .systemOrange
+        )
+        submenu.addItem(flagItem)
+
+        let readItem = NSMenuItem(title: "", action: #selector(markReadTapped(_:)), keyEquivalent: "")
+        readItem.target = self
+        readItem.representedObject = message
+        readItem.attributedTitle = coloredActionTitle(
+            message.isUnread ? "Mark as Read" : "Mark as Unread",
+            color: .systemBlue
+        )
+        submenu.addItem(readItem)
+
+        submenu.addItem(.separator())
+
+        let copyCodeItem = NSMenuItem(title: "Copy Code", action: #selector(copyCodeTapped(_:)), keyEquivalent: "")
+        copyCodeItem.target = self
+        copyCodeItem.representedObject = message
+        submenu.addItem(copyCodeItem)
+
+        let checkLinksItem = NSMenuItem(title: "Check for Links", action: #selector(checkLinksTapped(_:)), keyEquivalent: "")
+        checkLinksItem.target = self
+        checkLinksItem.representedObject = message
+        submenu.addItem(checkLinksItem)
+
+        return submenu
+    }
+
+    private func coloredActionTitle(_ text: String, color: NSColor) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: "● ", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .black),
+            .foregroundColor: color,
+            .baselineOffset: 1
+        ])
+        result.append(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)]))
+        return result
+    }
+
+    @objc private func flagTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onFlagMessage(message, !message.isFlagged)
+    }
+
+    @objc private func markReadTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onMarkReadMessage(message, message.isUnread)
+    }
+
+    @objc private func copyCodeTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onCopyCode(message)
+    }
+
+    @objc private func checkLinksTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onCheckLinks(message)
+    }
+
+    /// Pops up a small standalone menu listing links to choose from, once
+    /// they've been fetched asynchronously (the main menu has already
+    /// closed by then, so this is a fresh menu rather than a live submenu).
+    func showLinkPicker(links: [String]) {
+        guard !links.isEmpty else { return }
+        let picker = NSMenu()
+        for link in links {
+            let item = NSMenuItem(title: truncate(link, maxLength: 70), action: #selector(linkPickerItemTapped(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = link
+            picker.addItem(item)
+        }
+        picker.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func linkPickerItemTapped(_ sender: NSMenuItem) {
+        guard let urlString = sender.representedObject as? String, let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func formattedTitle(for message: MailHeader) -> NSAttributedString {

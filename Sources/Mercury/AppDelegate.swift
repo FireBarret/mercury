@@ -30,6 +30,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.imapClients.values.forEach { $0.markAllAsRead() }
             },
             onTogglePauseNotifications: { [weak self] in self?.togglePauseNotifications() },
+            onFlagMessage: { [weak self] message, flagged in
+                guard let uid = message.uid else { return }
+                self?.imapClient(forAccountEmail: message.accountEmail)?.setFlag(uid: uid, flag: "\\Flagged", on: flagged)
+            },
+            onMarkReadMessage: { [weak self] message, markAsRead in
+                guard let uid = message.uid else { return }
+                self?.imapClient(forAccountEmail: message.accountEmail)?.setFlag(uid: uid, flag: "\\Seen", on: markAsRead)
+            },
+            onCopyCode: { [weak self] message in self?.copyCode(from: message) },
+            onCheckLinks: { [weak self] message in self?.checkLinks(in: message) },
             onPreferences: { [weak self] in self?.showPreferences() },
             onQuit: { NSApp.terminate(nil) }
         )
@@ -61,6 +71,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         statusBarController?.updatePauseState(isPaused: notificationsPaused)
+    }
+
+    private func imapClient(forAccountEmail email: String) -> IMAPClient? {
+        for slot in AccountSlot.allCases where Credentials.email(for: slot) == email {
+            return imapClients[slot]
+        }
+        return nil
+    }
+
+    private func copyCode(from message: MailHeader) {
+        guard let uid = message.uid, let client = imapClient(forAccountEmail: message.accountEmail) else {
+            notificationManager.notifyQuickActionResult(title: "Copy Code", body: "Couldn't fetch that message.")
+            return
+        }
+        client.fetchMessageBody(uid: uid) { [weak self] rawBody in
+            guard let rawBody = rawBody else {
+                self?.notificationManager.notifyQuickActionResult(title: "Copy Code", body: "Couldn't fetch that message.")
+                return
+            }
+            let text = MessageBodyParser.extractPlainText(fromRawMessage: rawBody)
+            guard let code = MessageBodyParser.findOTPCode(inText: text) else {
+                self?.notificationManager.notifyQuickActionResult(title: "Copy Code", body: "No code found in that message.")
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code, forType: .string)
+            self?.notificationManager.notifyQuickActionResult(title: "Copy Code", body: "Copied \"\(code)\" to the clipboard.")
+        }
+    }
+
+    private func checkLinks(in message: MailHeader) {
+        guard let uid = message.uid, let client = imapClient(forAccountEmail: message.accountEmail) else {
+            notificationManager.notifyQuickActionResult(title: "Check for Links", body: "Couldn't fetch that message.")
+            return
+        }
+        client.fetchMessageBody(uid: uid) { [weak self] rawBody in
+            guard let rawBody = rawBody else {
+                self?.notificationManager.notifyQuickActionResult(title: "Check for Links", body: "Couldn't fetch that message.")
+                return
+            }
+            let links = MessageBodyParser.extractLinks(fromRawMessage: rawBody)
+            guard !links.isEmpty else {
+                self?.notificationManager.notifyQuickActionResult(title: "Check for Links", body: "No links found in that message.")
+                return
+            }
+            self?.statusBarController?.showLinkPicker(links: links)
+        }
     }
 
     private func openGmail() {
