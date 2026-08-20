@@ -6,13 +6,12 @@ import AppKit
 /// AppKit event handling applies with none of the uncertainty custom
 /// NSMenuItem views carry.
 ///
-/// Swiping right (content moves right) reveals leading-edge actions on the
-/// left, matching Mail.app's own convention of putting Unread there.
-/// Swiping left reveals trailing-edge actions on the right, matching
-/// Mail.app's Flag placement. A modest swipe reveals the Step 1 button (and
-/// Step 2's, once revealed enough); releasing past the Step 2 threshold
-/// auto-commits Step 2 immediately, matching Mail.app's "far swipe"
-/// convention for its default action.
+/// Swiping right reveals actions on the left/leading edge, matching
+/// Mail.app's convention of putting Unread there; swiping left reveals the
+/// right/trailing edge, matching its Flag placement. Within each side the
+/// step 1 action sits adjacent to the message content and step 2 sits
+/// outermost, so dragging well past the open position commits the
+/// outermost action -- the leftmost/rightmost one.
 final class SwipeableMessageRowView: NSView {
     private let message: MailHeader
     private let contentContainer = NSView()
@@ -22,28 +21,41 @@ final class SwipeableMessageRowView: NSView {
     private var leftButtons: [SwipeActionButton] = []
     private var rightButtons: [SwipeActionButton] = []
 
-    private var contentOffset: CGFloat = 0 {
-        didSet { layoutContent() }
-    }
+    private var contentOffset: CGFloat = 0
     private var gestureAccumulator: CGFloat = 0
     private var isTrackingGesture = false
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
 
-    private let step1Threshold: CGFloat = 60
-    private let step2Threshold: CGFloat = 130
-    private let maxReveal: CGFloat = 150
+    /// Width allotted to one action button, including its share of padding.
+    private let slotWidth: CGFloat = 76
+    /// Extra drag past the fully-open position required to auto-commit the
+    /// outermost action, plus how far the row can be dragged at all.
+    private let commitOvershoot: CGFloat = 62
+    private let dragOvershoot: CGFloat = 95
+    private let revealThreshold: CGFloat = 44
+    private let cornerRadius: CGFloat = 10
+
     // Flip this to -1 if real-world testing shows the swipe direction feels
     // backwards -- sign conventions for trackpad scrollingDeltaX can vary
     // and this isn't something testable without a physical trackpad.
     private let directionMultiplier: CGFloat = 1
+
+    /// Fully-open position per direction -- only as wide as the actions
+    /// actually configured, so a direction set to None/one action doesn't
+    /// leave dead space to drag into.
+    private var leftOpenWidth: CGFloat { CGFloat(leftButtons.count) * slotWidth }
+    private var rightOpenWidth: CGFloat { CGFloat(rightButtons.count) * slotWidth }
 
     var onTapOpen: (() -> Void)?
     var onAction: ((SwipeAction) -> Void)?
 
     init(message: MailHeader, attributedText: NSAttributedString) {
         self.message = message
-        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 46))
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 50))
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = true
         buildUI(attributedText: attributedText)
     }
 
@@ -57,22 +69,30 @@ final class SwipeableMessageRowView: NSView {
         leftActionsContainer.wantsLayer = true
         rightActionsContainer.wantsLayer = true
         contentContainer.wantsLayer = true
-        contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        // Without this, a label that ends up taller than the row (see the
-        // preferredMaxLayoutWidth note below) paints straight through into
-        // the neighboring rows instead of just being clipped -- exactly the
-        // "overlapping text" bug reported from the first real test.
+        contentContainer.layer?.backgroundColor = restingBackgroundColor.cgColor
+        // The content block keeps its own rounded corners so it still reads
+        // as a rounded row once it slides away from the row's own bounds --
+        // relying on the parent's mask alone left a hard square edge
+        // exposed mid-swipe.
+        contentContainer.layer?.cornerRadius = cornerRadius
         contentContainer.layer?.masksToBounds = true
-        layer?.masksToBounds = true
 
-        leftButtons = [
-            SwipeActionButton(action: Settings.rightSwipeStep1) { [weak self] in self?.commit(Settings.rightSwipeStep1) },
-            SwipeActionButton(action: Settings.rightSwipeStep2) { [weak self] in self?.commit(Settings.rightSwipeStep2) }
-        ]
-        rightButtons = [
-            SwipeActionButton(action: Settings.leftSwipeStep1) { [weak self] in self?.commit(Settings.leftSwipeStep1) },
-            SwipeActionButton(action: Settings.leftSwipeStep2) { [weak self] in self?.commit(Settings.leftSwipeStep2) }
-        ]
+        // .none slots are dropped rather than laid out as invisible gaps, so
+        // the reveal width always matches what's actually actionable.
+        leftButtons = [Settings.rightSwipeStep1, Settings.rightSwipeStep2]
+            .filter { $0 != .none }
+            .map { action in
+                SwipeActionButton(action: action, symbolName: symbolName(for: action)) { [weak self] in
+                    self?.commit(action)
+                }
+            }
+        rightButtons = [Settings.leftSwipeStep1, Settings.leftSwipeStep2]
+            .filter { $0 != .none }
+            .map { action in
+                SwipeActionButton(action: action, symbolName: symbolName(for: action)) { [weak self] in
+                    self?.commit(action)
+                }
+            }
         leftButtons.forEach { leftActionsContainer.addSubview($0) }
         rightButtons.forEach { rightActionsContainer.addSubview($0) }
 
@@ -81,12 +101,8 @@ final class SwipeableMessageRowView: NSView {
         contentLabel.maximumNumberOfLines = 2
         // Multi-line NSTextField needs its wrap width known *before* Auto
         // Layout can compute a correct intrinsic height -- without this, a
-        // label whose exact width is only found out *after* layout resolves
-        // (as with an inequality trailing constraint) sizes itself as if
-        // unconstrained. An exact trailing equality (below) combined with a
-        // fixed preferredMaxLayoutWidth removes that ambiguity entirely,
-        // rather than leaving Auto Layout to pick among several valid but
-        // possibly-degenerate solutions.
+        // label whose exact width is only found out after layout resolves
+        // sizes itself as if unconstrained and overflows the row.
         contentLabel.preferredMaxLayoutWidth = 316
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(contentLabel)
@@ -100,51 +116,131 @@ final class SwipeableMessageRowView: NSView {
         contentContainer.addGestureRecognizer(clickGesture)
     }
 
-    override func layout() {
-        super.layout()
-        leftActionsContainer.frame = NSRect(x: 0, y: 0, width: maxReveal, height: bounds.height)
-        rightActionsContainer.frame = NSRect(x: bounds.width - maxReveal, y: 0, width: maxReveal, height: bounds.height)
-        layoutActionButtons(in: leftActionsContainer, buttons: leftButtons, rightAligned: true)
-        layoutActionButtons(in: rightActionsContainer, buttons: rightButtons, rightAligned: false)
-        layoutContent()
+    /// Mark-as-read and mark-as-unread are the same configurable slot but
+    /// need to read as different actions, so the glyph follows the
+    /// message's current state -- open envelope to mark read, sealed
+    /// envelope to mark unread (same pairing the classic menu uses).
+    private func symbolName(for action: SwipeAction) -> String {
+        guard action == .markRead else { return action.symbolName }
+        return message.isUnread ? "envelope.open.fill" : "envelope.fill"
     }
 
-    private func layoutActionButtons(in container: NSView, buttons: [SwipeActionButton], rightAligned: Bool) {
-        let size: CGFloat = 34
-        let spacing: CGFloat = 10
-        let y = (container.bounds.height - size) / 2
-        if rightAligned {
-            var x = container.bounds.width - size - spacing
-            for button in buttons {
-                button.frame = NSRect(x: x, y: y, width: size, height: size)
-                x -= size + spacing
-            }
-        } else {
-            var x: CGFloat = spacing
-            for button in buttons {
-                button.frame = NSRect(x: x, y: y, width: size, height: size)
-                x += size + spacing
-            }
+    private var restingBackgroundColor: NSColor { .windowBackgroundColor }
+    private var hoveredBackgroundColor: NSColor { .unemphasizedSelectedContentBackgroundColor }
+
+    // MARK: - Hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        applyHoverAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        applyHoverAppearance()
+    }
+
+    private func applyHoverAppearance() {
+        let color = isHovered ? hoveredBackgroundColor : restingBackgroundColor
+        contentContainer.layer?.backgroundColor = color.cgColor
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    /// Layer-backed colors are resolved CGColors, so they don't follow a
+    /// light/dark appearance switch on their own the way NSColor-drawn
+    /// content does.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applyHoverAppearance()
         }
     }
 
-    private func layoutContent() {
+    // MARK: - Layout
+
+    override func layout() {
+        super.layout()
+        leftActionsContainer.frame = NSRect(x: 0, y: 0, width: leftOpenWidth, height: bounds.height)
+        rightActionsContainer.frame = NSRect(
+            x: bounds.width - rightOpenWidth,
+            y: 0,
+            width: rightOpenWidth,
+            height: bounds.height
+        )
+        // Step 1 sits adjacent to the message content, step 2 outermost --
+        // hence the left side lays out from its right edge inward.
+        layoutActionButtons(in: leftActionsContainer, buttons: leftButtons, fromInnerEdge: .right)
+        layoutActionButtons(in: rightActionsContainer, buttons: rightButtons, fromInnerEdge: .left)
         contentContainer.frame = NSRect(x: contentOffset, y: 0, width: bounds.width, height: bounds.height)
-        // Second button in each direction only becomes visible once swiped
-        // past the step 1 threshold, so a light swipe shows just one choice.
-        leftButtons.last?.alphaValue = contentOffset > step1Threshold ? 1 : 0
-        rightButtons.last?.alphaValue = contentOffset < -step1Threshold ? 1 : 0
+    }
+
+    private enum InnerEdge { case left, right }
+
+    private func layoutActionButtons(in container: NSView, buttons: [SwipeActionButton], fromInnerEdge edge: InnerEdge) {
+        guard !buttons.isEmpty else { return }
+        let verticalInset: CGFloat = 3
+        let horizontalInset: CGFloat = 5
+        let height = max(container.bounds.height - verticalInset * 2, 20)
+        let width = slotWidth - horizontalInset * 2
+        let y = verticalInset
+
+        for (index, button) in buttons.enumerated() {
+            let slotX: CGFloat
+            switch edge {
+            case .right:
+                slotX = container.bounds.width - CGFloat(index + 1) * slotWidth
+            case .left:
+                slotX = CGFloat(index) * slotWidth
+            }
+            button.frame = NSRect(x: slotX + horizontalInset, y: y, width: width, height: height)
+        }
+    }
+
+    /// Moves the content without going through `layout()`, so an animated
+    /// slide isn't immediately overwritten by a direct frame assignment
+    /// (which is what previously made the "animation" snap instantly).
+    private func setOffset(_ value: CGFloat, animated: Bool) {
+        contentOffset = value
+        let origin = NSPoint(x: value, y: 0)
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                contentContainer.animator().setFrameOrigin(origin)
+            }
+        } else {
+            contentContainer.setFrameOrigin(origin)
+        }
     }
 
     @objc private func tapped() {
         guard contentOffset == 0 else {
             // Tapping the content while a side is revealed just closes it,
             // same as Mail.app -- doesn't also open the message.
-            animateOffset(to: 0)
+            setOffset(0, animated: true)
             return
         }
         onTapOpen?()
     }
+
+    // MARK: - Swipe
 
     override func scrollWheel(with event: NSEvent) {
         // Only real trackpad gestures carry a phase; a plain mouse wheel
@@ -167,7 +263,9 @@ final class SwipeableMessageRowView: NSView {
         case .changed:
             guard isTrackingGesture else { break }
             gestureAccumulator += event.scrollingDeltaX * directionMultiplier
-            contentOffset = max(-maxReveal, min(maxReveal, gestureAccumulator))
+            let upper = leftButtons.isEmpty ? 0 : leftOpenWidth + dragOvershoot
+            let lower = rightButtons.isEmpty ? 0 : -(rightOpenWidth + dragOvershoot)
+            setOffset(max(lower, min(upper, gestureAccumulator)), animated: false)
         case .ended, .cancelled:
             guard isTrackingGesture else { break }
             isTrackingGesture = false
@@ -178,64 +276,104 @@ final class SwipeableMessageRowView: NSView {
     }
 
     private func finishGesture() {
-        if contentOffset > step2Threshold {
-            animateOffset(to: 0)
-            commit(Settings.rightSwipeStep2)
-        } else if contentOffset > step1Threshold {
-            animateOffset(to: step2Threshold)
-        } else if contentOffset < -step2Threshold {
-            animateOffset(to: 0)
-            commit(Settings.leftSwipeStep2)
-        } else if contentOffset < -step1Threshold {
-            animateOffset(to: -step2Threshold)
-        } else {
-            animateOffset(to: 0)
-        }
-    }
+        let outermostLeft = leftButtons.last?.action
+        let outermostRight = rightButtons.last?.action
 
-    private func animateOffset(to target: CGFloat) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.22
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            contentContainer.animator().setFrameOrigin(NSPoint(x: target, y: 0))
+        if !leftButtons.isEmpty, contentOffset > leftOpenWidth + commitOvershoot {
+            setOffset(0, animated: true)
+            if let action = outermostLeft { onAction?(action) }
+        } else if !leftButtons.isEmpty, contentOffset > revealThreshold {
+            setOffset(leftOpenWidth, animated: true)
+        } else if !rightButtons.isEmpty, contentOffset < -(rightOpenWidth + commitOvershoot) {
+            setOffset(0, animated: true)
+            if let action = outermostRight { onAction?(action) }
+        } else if !rightButtons.isEmpty, contentOffset < -revealThreshold {
+            setOffset(-rightOpenWidth, animated: true)
+        } else {
+            setOffset(0, animated: true)
         }
-        contentOffset = target
     }
 
     private func commit(_ action: SwipeAction) {
         guard action != .none else { return }
-        animateOffset(to: 0)
+        setOffset(0, animated: true)
         onAction?(action)
     }
 }
 
-/// A small colored square button used for one revealed swipe action.
+/// A colored action button revealed by swiping, sized to nearly fill the
+/// row's height and highlighting as the cursor passes over it.
 private final class SwipeActionButton: NSView {
+    let action: SwipeAction
     private let onTap: () -> Void
+    private let baseColor: NSColor
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
 
-    init(action: SwipeAction, onTap: @escaping () -> Void) {
+    init(action: SwipeAction, symbolName: String, onTap: @escaping () -> Void) {
+        self.action = action
         self.onTap = onTap
+        self.baseColor = action.color
         super.init(frame: .zero)
-        guard action != .none else { return }
         wantsLayer = true
         layer?.cornerRadius = 8
-        layer?.backgroundColor = action.color.cgColor
+        applyHoverAppearance()
 
-        let imageView = NSImageView(image: NSImage(systemSymbolName: action.symbolName, accessibilityDescription: nil) ?? NSImage())
+        let imageView = NSImageView(image: NSImage(systemSymbolName: symbolName, accessibilityDescription: action.displayName) ?? NSImage())
         imageView.contentTintColor = .white
         imageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageView)
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 16),
-            imageView.heightAnchor.constraint(equalToConstant: 16)
+            imageView.widthAnchor.constraint(equalToConstant: 19),
+            imageView.heightAnchor.constraint(equalToConstant: 19)
         ])
 
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tapped)))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        applyHoverAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        applyHoverAppearance()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    private func applyHoverAppearance() {
+        let color = isHovered ? (baseColor.highlight(withLevel: 0.25) ?? baseColor) : baseColor
+        layer?.backgroundColor = color.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applyHoverAppearance()
+        }
+    }
 
     @objc private func tapped() { onTap() }
 }

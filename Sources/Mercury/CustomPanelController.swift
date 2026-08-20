@@ -9,6 +9,57 @@ private final class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// A borderless NSButton that highlights as the cursor passes over it.
+/// Plain borderless buttons give no hover feedback at all, which made the
+/// panel's footer feel inert compared with a real NSMenu.
+private final class HoverButton: NSButton {
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        applyHoverAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        applyHoverAppearance()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    private func applyHoverAppearance() {
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        layer?.backgroundColor = isHovered
+            ? NSColor.unemphasizedSelectedContentBackgroundColor.cgColor
+            : NSColor.clear.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applyHoverAppearance()
+        }
+    }
+}
+
 /// The "option 1" swipeable panel: a fully custom floating window used
 /// instead of the classic NSMenu dropdown when Settings.useCustomPanel is
 /// on. Styled as a best-effort approximation of Apple's translucent
@@ -56,7 +107,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         self.onCheckLinks = onCheckLinks
         self.onPreferences = onPreferences
         self.onQuit = onQuit
-        self.pauseButton = NSButton(title: "Pause Notifications (1h)", target: nil, action: nil)
+        self.pauseButton = HoverButton(title: "Pause Notifications (1h)", target: nil, action: nil)
 
         panel = FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: 340, height: 200),
@@ -158,7 +209,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     }
 
     private func actionRow(title: String, symbol: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
+        let button = HoverButton(title: title, target: self, action: action)
         configureActionButton(button, title: title, symbol: symbol, action: action)
         return button
     }
@@ -174,7 +225,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         button.alignment = .left
         button.font = .systemFont(ofSize: 13)
         button.contentTintColor = .labelColor
-        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         if let cell = button.cell as? NSButtonCell {
             cell.imageScaling = .scaleProportionallyDown
         }
