@@ -43,6 +43,7 @@ final class SwipeableMessageRowView: NSView {
         self.message = message
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 46))
         wantsLayer = true
+        layer?.cornerRadius = 10
         buildUI(attributedText: attributedText)
     }
 
@@ -57,6 +58,12 @@ final class SwipeableMessageRowView: NSView {
         rightActionsContainer.wantsLayer = true
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // Without this, a label that ends up taller than the row (see the
+        // preferredMaxLayoutWidth note below) paints straight through into
+        // the neighboring rows instead of just being clipped -- exactly the
+        // "overlapping text" bug reported from the first real test.
+        contentContainer.layer?.masksToBounds = true
+        layer?.masksToBounds = true
 
         leftButtons = [
             SwipeActionButton(action: Settings.rightSwipeStep1) { [weak self] in self?.commit(Settings.rightSwipeStep1) },
@@ -72,11 +79,20 @@ final class SwipeableMessageRowView: NSView {
         contentLabel.attributedStringValue = attributedText
         contentLabel.lineBreakMode = .byTruncatingTail
         contentLabel.maximumNumberOfLines = 2
+        // Multi-line NSTextField needs its wrap width known *before* Auto
+        // Layout can compute a correct intrinsic height -- without this, a
+        // leading/trailing-constrained label (whose exact width isn't known
+        // until layout resolves) sizes itself as if unconstrained, comes
+        // out taller than the row, and bleeds into neighboring rows since
+        // there's nothing to tell it how wide it'll actually be first.
+        contentLabel.preferredMaxLayoutWidth = 300
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(contentLabel)
         NSLayoutConstraint.activate([
             contentLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 12),
             contentLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor, constant: -12),
+            contentLabel.topAnchor.constraint(greaterThanOrEqualTo: contentContainer.topAnchor, constant: 4),
+            contentLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor, constant: -4),
             contentLabel.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor)
         ])
 

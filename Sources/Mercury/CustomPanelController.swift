@@ -110,7 +110,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
 
         messagesStack.orientation = .vertical
         messagesStack.alignment = .width
-        messagesStack.spacing = 2
+        messagesStack.spacing = 4
         outerStack.addArrangedSubview(messagesStack)
 
         outerStack.addArrangedSubview(divider())
@@ -212,12 +212,17 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
                 let header = NSTextField(labelWithString: account.displayName)
                 header.font = .systemFont(ofSize: 11, weight: .semibold)
                 header.textColor = .tertiaryLabelColor
-                messagesStack.addArrangedSubview(padded(header))
+                let paddedHeader = padded(header)
+                if let previous = messagesStack.arrangedSubviews.last {
+                    messagesStack.setCustomSpacing(12, after: previous)
+                }
+                messagesStack.addArrangedSubview(paddedHeader)
+                messagesStack.setCustomSpacing(4, after: paddedHeader)
             }
             for message in account.recentMessages {
                 let row = SwipeableMessageRowView(message: message, attributedText: formattedTitle(for: message))
                 row.translatesAutoresizingMaskIntoConstraints = false
-                row.heightAnchor.constraint(equalToConstant: 46).isActive = true
+                row.heightAnchor.constraint(equalToConstant: 50).isActive = true
                 row.onTapOpen = { MessageOpener.open(messageID: message.messageID) }
                 row.onAction = { [weak self] action in self?.perform(action, on: message) }
                 messagesStack.addArrangedSubview(row)
