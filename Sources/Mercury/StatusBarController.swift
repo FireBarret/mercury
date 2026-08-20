@@ -260,39 +260,32 @@ final class StatusBarController {
         header.isHidden = messages.isEmpty
         guard !messages.isEmpty else { return }
 
-        // Each message gets two menu items: the row itself (click opens the
-        // message -- unchanged from before) and a "Quick Actions" sibling
-        // right below it carrying the 4 actions as a submenu. A submenu
-        // can't live directly on the row's own item without losing its
-        // click-to-open behavior (AppKit routes clicks on a submenu-bearing
-        // item to opening the submenu, not to the item's action), so this
-        // keeps both working at the cost of the Recent list getting twice
-        // as many rows.
+        // The row itself carries the submenu now -- hovering it reveals the
+        // actions to the side automatically (native NSMenuItem/submenu
+        // behavior, no custom reveal code needed). The tradeoff: a
+        // submenu-bearing item doesn't fire its own click action anymore
+        // (AppKit routes clicks on it to opening the submenu instead), so
+        // opening the message moved to be the first choice inside the
+        // submenu rather than a single click on the row.
         let insertionIndex = menu.index(of: header) + 1
-        var offset = 0
-        for message in messages {
-            let item = NSMenuItem(title: "", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
-            item.target = self
+        for (offset, message) in messages.enumerated() {
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = formattedTitle(for: message)
             item.representedObject = message
+            item.submenu = quickActionsSubmenu(for: message)
             menu.insertItem(item, at: insertionIndex + offset)
             items.append(item)
-            offset += 1
-
-            let actionsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            actionsItem.attributedTitle = NSAttributedString(string: "    Quick Actions", attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ])
-            actionsItem.submenu = quickActionsSubmenu(for: message)
-            menu.insertItem(actionsItem, at: insertionIndex + offset)
-            items.append(actionsItem)
-            offset += 1
         }
     }
 
     private func quickActionsSubmenu(for message: MailHeader) -> NSMenu {
         let submenu = NSMenu()
+
+        let openItem = NSMenuItem(title: "Open Message", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
+        openItem.target = self
+        openItem.representedObject = message
+        submenu.addItem(openItem)
+        submenu.addItem(.separator())
 
         let flagItem = NSMenuItem(title: "", action: #selector(flagTapped(_:)), keyEquivalent: "")
         flagItem.target = self
