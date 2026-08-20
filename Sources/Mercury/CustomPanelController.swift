@@ -112,6 +112,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         messagesStack.alignment = .width
         messagesStack.spacing = 4
         outerStack.addArrangedSubview(messagesStack)
+        messagesStack.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
 
         outerStack.addArrangedSubview(divider())
 
@@ -128,6 +129,11 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         outerStack.addArrangedSubview(padded(actionRow(title: "Quit Mercury", symbol: "power", action: #selector(quitTapped))))
     }
 
+    /// NSStackView's .width alignment turned out not to reliably force
+    /// arranged subviews to fill a nested stack's width in practice (this
+    /// was the root cause of the first real-world test showing half-width,
+    /// right-hugged rows) -- every section pins its own width explicitly to
+    /// panelWidth instead of trusting alignment alone.
     private func padded(_ view: NSView) -> NSView {
         let container = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -136,7 +142,8 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
             view.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             view.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
             view.topAnchor.constraint(equalTo: container.topAnchor),
-            view.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            container.widthAnchor.constraint(equalToConstant: panelWidth)
         ])
         return container
     }
@@ -146,6 +153,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         line.boxType = .separator
         line.translatesAutoresizingMaskIntoConstraints = false
         line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        line.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
         return line
     }
 
@@ -217,12 +225,26 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
                     messagesStack.setCustomSpacing(12, after: previous)
                 }
                 messagesStack.addArrangedSubview(paddedHeader)
+                // NSStackView's .width alignment doesn't reliably propagate
+                // through a nested stack the way a single-level stack does
+                // -- pinning explicitly is what actually guarantees these
+                // fill the panel's width instead of just hugging their own
+                // content (the bug that made rows render at roughly half
+                // width, right-hugged, in the first real test).
+                NSLayoutConstraint.activate([
+                    paddedHeader.leadingAnchor.constraint(equalTo: messagesStack.leadingAnchor),
+                    paddedHeader.trailingAnchor.constraint(equalTo: messagesStack.trailingAnchor)
+                ])
                 messagesStack.setCustomSpacing(4, after: paddedHeader)
             }
             for message in account.recentMessages {
                 let row = SwipeableMessageRowView(message: message, attributedText: formattedTitle(for: message))
                 row.translatesAutoresizingMaskIntoConstraints = false
                 row.heightAnchor.constraint(equalToConstant: 50).isActive = true
+                NSLayoutConstraint.activate([
+                    row.leadingAnchor.constraint(equalTo: messagesStack.leadingAnchor),
+                    row.trailingAnchor.constraint(equalTo: messagesStack.trailingAnchor)
+                ])
                 row.onTapOpen = { MessageOpener.open(messageID: message.messageID) }
                 row.onAction = { [weak self] action in self?.perform(action, on: message) }
                 messagesStack.addArrangedSubview(row)

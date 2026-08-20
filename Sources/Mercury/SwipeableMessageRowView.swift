@@ -81,18 +81,18 @@ final class SwipeableMessageRowView: NSView {
         contentLabel.maximumNumberOfLines = 2
         // Multi-line NSTextField needs its wrap width known *before* Auto
         // Layout can compute a correct intrinsic height -- without this, a
-        // leading/trailing-constrained label (whose exact width isn't known
-        // until layout resolves) sizes itself as if unconstrained, comes
-        // out taller than the row, and bleeds into neighboring rows since
-        // there's nothing to tell it how wide it'll actually be first.
-        contentLabel.preferredMaxLayoutWidth = 300
+        // label whose exact width is only found out *after* layout resolves
+        // (as with an inequality trailing constraint) sizes itself as if
+        // unconstrained. An exact trailing equality (below) combined with a
+        // fixed preferredMaxLayoutWidth removes that ambiguity entirely,
+        // rather than leaving Auto Layout to pick among several valid but
+        // possibly-degenerate solutions.
+        contentLabel.preferredMaxLayoutWidth = 316
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(contentLabel)
         NSLayoutConstraint.activate([
             contentLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 12),
-            contentLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor, constant: -12),
-            contentLabel.topAnchor.constraint(greaterThanOrEqualTo: contentContainer.topAnchor, constant: 4),
-            contentLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor, constant: -4),
+            contentLabel.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -12),
             contentLabel.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor)
         ])
 
