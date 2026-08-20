@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/AppIcon-source.png" alt="Mercury icon" width="128" height="128">
+</p>
+
 # Mercury
 
 A tiny, free, open-source macOS menubar app that watches your Gmail inbox
