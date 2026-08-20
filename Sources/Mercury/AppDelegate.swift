@@ -236,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // re-rendering already-cached data; checkNow() additionally
                     // covers the min/max-count case, which needs a real refresh
                     // to actually fetch more or fewer messages.
+                    self?.statusBarController?.applyInterfaceMode()
                     self?.refreshStatusBar()
                     self?.imapClients.values.forEach { $0.checkNow() }
                 }

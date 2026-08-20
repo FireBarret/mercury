@@ -23,6 +23,7 @@ final class StatusBarController {
     private var lastAccounts: [AccountDisplayState] = []
 
     private let pauseNotificationsItem = NSMenuItem(title: "Pause Notifications (1h)", action: nil, keyEquivalent: "")
+    private var customPanelController: CustomPanelController?
 
     private let onCheckNow: () -> Void
     private let onOpenGmail: () -> Void
@@ -95,7 +96,44 @@ final class StatusBarController {
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Quit", action: #selector(quitTapped), keyEquivalent: "q"))
 
-        statusItem.menu = menu
+        customPanelController = CustomPanelController(
+            onCheckNow: onCheckNow,
+            onOpenGmail: onOpenGmail,
+            onMarkAllAsRead: onMarkAllAsRead,
+            onTogglePauseNotifications: onTogglePauseNotifications,
+            onFlagMessage: onFlagMessage,
+            onMarkReadMessage: onMarkReadMessage,
+            onCopyCode: onCopyCode,
+            onCheckLinks: onCheckLinks,
+            onPreferences: onPreferences,
+            onQuit: onQuit
+        )
+
+        applyInterfaceMode()
+    }
+
+    /// Switches the status item between the classic NSMenu dropdown and the
+    /// custom swipeable panel, based on Settings.useCustomPanel. Safe to
+    /// call again any time the setting changes at runtime (Preferences
+    /// already re-invokes this via onDisplaySettingsChanged), since AppKit
+    /// doesn't allow both a menu and a custom click action on one status
+    /// item at once.
+    func applyInterfaceMode() {
+        if Settings.useCustomPanel {
+            statusItem.menu = nil
+            statusItem.button?.target = self
+            statusItem.button?.action = #selector(statusItemClicked)
+        } else {
+            customPanelController?.hide()
+            statusItem.button?.target = nil
+            statusItem.button?.action = nil
+            statusItem.menu = menu
+        }
+    }
+
+    @objc private func statusItemClicked() {
+        guard let button = statusItem.button else { return }
+        customPanelController?.toggle(relativeTo: button)
     }
 
     private func makeItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
@@ -124,10 +162,12 @@ final class StatusBarController {
 
     func updateConnectionStatus(_ status: String) {
         statusItem.button?.toolTip = status
+        customPanelController?.updateConnectionStatus(status)
     }
 
     func updatePauseState(isPaused: Bool) {
         pauseNotificationsItem.title = isPaused ? "Resume Notifications" : "Pause Notifications (1h)"
+        customPanelController?.updatePauseState(isPaused: isPaused)
     }
 
     /// Pops the menu open as if the status item had been clicked — used by
@@ -149,6 +189,7 @@ final class StatusBarController {
     /// account's display name (custom, or "Mail 1"/"Mail 2" by default).
     func update(accounts: [AccountDisplayState]) {
         lastAccounts = accounts
+        customPanelController?.update(accounts: accounts)
         let showRecent = Settings.showRecentMessagesInMenu
 
         guard !accounts.isEmpty else {

@@ -36,6 +36,16 @@ final class PreferencesWindowController: NSWindowController {
     private let maxCountStepper = NSStepper()
     private let maxCountValueLabel = NSTextField(labelWithString: "")
 
+    private let useCustomPanelCheckbox = NSButton(
+        checkboxWithTitle: "Use custom swipeable panel (Beta)",
+        target: nil,
+        action: nil
+    )
+    private let rightStep1PopUp = NSPopUpButton()
+    private let rightStep2PopUp = NSPopUpButton()
+    private let leftStep1PopUp = NSPopUpButton()
+    private let leftStep2PopUp = NSPopUpButton()
+
     private let onSaveAccount: (String, String, AccountSlot) -> Void
     private let onRemoveAccount: (AccountSlot) -> Void
     private let onShortcutChanged: (UInt32?, UInt32?) -> Void
@@ -305,7 +315,35 @@ final class PreferencesWindowController: NSWindowController {
         mailBehaviorStack.alignment = .leading
         mailBehaviorStack.spacing = 10
 
-        let mainStack = NSStackView(views: [optionsStack, divider(width: fieldWidth), mailBehaviorStack])
+        // --- Swipeable panel (Beta) ---
+
+        useCustomPanelCheckbox.target = self
+        useCustomPanelCheckbox.action = #selector(useCustomPanelToggled)
+        useCustomPanelCheckbox.state = Settings.useCustomPanel ? .on : .off
+
+        let swipeHelpLabel = NSTextField(wrappingLabelWithString:
+            "Replaces the dropdown with a floating panel where you can swipe messages with two fingers, like Mail.app. Each direction reveals up to two actions -- swipe further to trigger the second one immediately.")
+        swipeHelpLabel.font = NSFont.systemFont(ofSize: 11)
+        swipeHelpLabel.textColor = .secondaryLabelColor
+
+        let rightStep1Row = swipeActionRow(label: "Swipe right (1st):", popUp: rightStep1PopUp, current: Settings.rightSwipeStep1, action: #selector(rightStep1Changed))
+        let rightStep2Row = swipeActionRow(label: "Swipe right (2nd, far):", popUp: rightStep2PopUp, current: Settings.rightSwipeStep2, action: #selector(rightStep2Changed))
+        let leftStep1Row = swipeActionRow(label: "Swipe left (1st):", popUp: leftStep1PopUp, current: Settings.leftSwipeStep1, action: #selector(leftStep1Changed))
+        let leftStep2Row = swipeActionRow(label: "Swipe left (2nd, far):", popUp: leftStep2PopUp, current: Settings.leftSwipeStep2, action: #selector(leftStep2Changed))
+
+        let swipeStack = NSStackView(views: [
+            useCustomPanelCheckbox, swipeHelpLabel, rightStep1Row, rightStep2Row, leftStep1Row, leftStep2Row
+        ])
+        swipeStack.orientation = .vertical
+        swipeStack.alignment = .leading
+        swipeStack.spacing = 8
+        swipeStack.setCustomSpacing(4, after: useCustomPanelCheckbox)
+        swipeStack.setCustomSpacing(10, after: swipeHelpLabel)
+        swipeHelpLabel.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+
+        let mainStack = NSStackView(views: [
+            optionsStack, divider(width: fieldWidth), mailBehaviorStack, divider(width: fieldWidth), swipeStack
+        ])
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
         mainStack.spacing = 18
@@ -319,6 +357,22 @@ final class PreferencesWindowController: NSWindowController {
         ])
 
         return container
+    }
+
+    private func swipeActionRow(label: String, popUp: NSPopUpButton, current: SwipeAction, action: Selector) -> NSStackView {
+        popUp.removeAllItems()
+        popUp.addItems(withTitles: SwipeAction.allCases.map { $0.displayName })
+        if let index = SwipeAction.allCases.firstIndex(of: current) {
+            popUp.selectItem(at: index)
+        }
+        popUp.target = self
+        popUp.action = action
+        let labelField = NSTextField(labelWithString: label)
+        labelField.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        let row = NSStackView(views: [labelField, popUp])
+        row.orientation = .horizontal
+        row.spacing = 8
+        return row
     }
 
     private func sectionLabel(_ title: String) -> NSTextField {
@@ -418,6 +472,43 @@ final class PreferencesWindowController: NSWindowController {
         }
         maxCountValueLabel.stringValue = "\(value)"
         Settings.recentListMaxCount = value
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func useCustomPanelToggled() {
+        Settings.useCustomPanel = (useCustomPanelCheckbox.state == .on)
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func rightStep1Changed() {
+        let index = rightStep1PopUp.indexOfSelectedItem
+        let actions = SwipeAction.allCases
+        guard index >= 0, index < actions.count else { return }
+        Settings.rightSwipeStep1 = actions[index]
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func rightStep2Changed() {
+        let index = rightStep2PopUp.indexOfSelectedItem
+        let actions = SwipeAction.allCases
+        guard index >= 0, index < actions.count else { return }
+        Settings.rightSwipeStep2 = actions[index]
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func leftStep1Changed() {
+        let index = leftStep1PopUp.indexOfSelectedItem
+        let actions = SwipeAction.allCases
+        guard index >= 0, index < actions.count else { return }
+        Settings.leftSwipeStep1 = actions[index]
+        onDisplaySettingsChanged()
+    }
+
+    @objc private func leftStep2Changed() {
+        let index = leftStep2PopUp.indexOfSelectedItem
+        let actions = SwipeAction.allCases
+        guard index >= 0, index < actions.count else { return }
+        Settings.leftSwipeStep2 = actions[index]
         onDisplaySettingsChanged()
     }
 
