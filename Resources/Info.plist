@@ -4,6 +4,8 @@
 <dict>
     <key>CFBundleExecutable</key>
     <string>Mercury</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.mercuryapp.Mercury</string>
     <key>CFBundleName</key>
