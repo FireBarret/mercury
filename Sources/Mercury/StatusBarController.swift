@@ -26,7 +26,8 @@ final class StatusBarController {
 
     private let onCheckNow: () -> Void
     private let onOpenGmail: () -> Void
-    private let onOpenMessage: (MailHeader) -> Void
+    private let onOpenMessageInGmail: (MailHeader) -> Void
+    private let onOpenMessageInMailApp: (MailHeader) -> Void
     private let onTestNotification: () -> Void
     private let onMarkAllAsRead: () -> Void
     private let onTogglePauseNotifications: () -> Void
@@ -39,7 +40,8 @@ final class StatusBarController {
 
     init(onCheckNow: @escaping () -> Void,
          onOpenGmail: @escaping () -> Void,
-         onOpenMessage: @escaping (MailHeader) -> Void,
+         onOpenMessageInGmail: @escaping (MailHeader) -> Void,
+         onOpenMessageInMailApp: @escaping (MailHeader) -> Void,
          onTestNotification: @escaping () -> Void,
          onMarkAllAsRead: @escaping () -> Void,
          onTogglePauseNotifications: @escaping () -> Void,
@@ -51,7 +53,8 @@ final class StatusBarController {
          onQuit: @escaping () -> Void) {
         self.onCheckNow = onCheckNow
         self.onOpenGmail = onOpenGmail
-        self.onOpenMessage = onOpenMessage
+        self.onOpenMessageInGmail = onOpenMessageInGmail
+        self.onOpenMessageInMailApp = onOpenMessageInMailApp
         self.onTestNotification = onTestNotification
         self.onMarkAllAsRead = onMarkAllAsRead
         self.onTogglePauseNotifications = onTogglePauseNotifications
@@ -111,7 +114,17 @@ final class StatusBarController {
 
     @objc private func recentItemTapped(_ sender: NSMenuItem) {
         guard let message = sender.representedObject as? MailHeader else { return }
-        onOpenMessage(message)
+        onOpenMessageInGmail(message)
+    }
+
+    @objc private func openInGmailTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onOpenMessageInGmail(message)
+    }
+
+    @objc private func openInMailAppTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onOpenMessageInMailApp(message)
     }
 
     func updateConnectionStatus(_ status: String) {
@@ -260,31 +273,49 @@ final class StatusBarController {
         header.isHidden = messages.isEmpty
         guard !messages.isEmpty else { return }
 
-        // The row itself carries the submenu now -- hovering it reveals the
-        // actions to the side automatically (native NSMenuItem/submenu
-        // behavior, no custom reveal code needed). The tradeoff: a
-        // submenu-bearing item doesn't fire its own click action anymore
-        // (AppKit routes clicks on it to opening the submenu instead), so
-        // opening the message moved to be the first choice inside the
-        // submenu rather than a single click on the row.
+        // A submenu-bearing NSMenuItem can't also fire its own click action
+        // (AppKit routes clicks on it to opening the submenu instead), so a
+        // single row can't both open directly on click AND reveal a hover
+        // submenu -- that split needs two items. The row stays a plain
+        // clickable item (click = open in Gmail); a compact "•••" sibling
+        // right after it carries the submenu for everything else, instead
+        // of the wordier "Quick Actions" label this used before.
         let insertionIndex = menu.index(of: header) + 1
-        for (offset, message) in messages.enumerated() {
-            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        var offset = 0
+        for message in messages {
+            let item = NSMenuItem(title: "", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
+            item.target = self
             item.attributedTitle = formattedTitle(for: message)
             item.representedObject = message
-            item.submenu = quickActionsSubmenu(for: message)
             menu.insertItem(item, at: insertionIndex + offset)
             items.append(item)
+            offset += 1
+
+            let moreItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            moreItem.attributedTitle = NSAttributedString(string: "    •••", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ])
+            moreItem.submenu = quickActionsSubmenu(for: message)
+            menu.insertItem(moreItem, at: insertionIndex + offset)
+            items.append(moreItem)
+            offset += 1
         }
     }
 
     private func quickActionsSubmenu(for message: MailHeader) -> NSMenu {
         let submenu = NSMenu()
 
-        let openItem = NSMenuItem(title: "Open Message", action: #selector(recentItemTapped(_:)), keyEquivalent: "")
-        openItem.target = self
-        openItem.representedObject = message
-        submenu.addItem(openItem)
+        let openMailAppItem = NSMenuItem(title: "Open in Mail.app", action: #selector(openInMailAppTapped(_:)), keyEquivalent: "")
+        openMailAppItem.target = self
+        openMailAppItem.representedObject = message
+        submenu.addItem(openMailAppItem)
+
+        let openGmailItem = NSMenuItem(title: "Open in Gmail", action: #selector(openInGmailTapped(_:)), keyEquivalent: "")
+        openGmailItem.target = self
+        openGmailItem.representedObject = message
+        submenu.addItem(openGmailItem)
+
         submenu.addItem(.separator())
 
         let flagItem = NSMenuItem(title: "", action: #selector(flagTapped(_:)), keyEquivalent: "")

@@ -21,8 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = StatusBarController(
             onCheckNow: { [weak self] in self?.imapClients.values.forEach { $0.checkNow() } },
             onOpenGmail: { [weak self] in self?.openGmail() },
-            onOpenMessage: { message in
-                MessageOpener.open(messageID: message.messageID)
+            onOpenMessageInGmail: { message in
+                MessageOpener.openInGmailBrowser(messageID: message.messageID)
+            },
+            onOpenMessageInMailApp: { message in
+                MessageOpener.openInMailApp(messageID: message.messageID)
             },
             onTestNotification: { [weak self] in self?.notificationManager.sendTestNotification() },
             onMarkAllAsRead: { [weak self] in

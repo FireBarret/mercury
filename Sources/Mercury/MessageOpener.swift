@@ -3,20 +3,26 @@ import AppKit
 /// Routes "open this message" clicks (from the recent-messages menu or a
 /// notification tap) to whichever app Settings.openMailAction points at.
 enum MessageOpener {
+    /// Routes to whichever app Settings.openMailAction points at -- used
+    /// for notification taps, where there's no explicit per-app choice.
     static func open(messageID: String?) {
         switch Settings.openMailAction {
         case .mailApp:
-            if let messageID = messageID {
-                MailAppOpener.openMessage(withMessageID: messageID)
-            } else {
-                openGmailInbox()
-            }
+            openInMailApp(messageID: messageID)
         case .gmailBrowser:
             openInGmailBrowser(messageID: messageID)
         }
     }
 
-    private static func openInGmailBrowser(messageID: String?) {
+    static func openInMailApp(messageID: String?) {
+        if let messageID = messageID {
+            MailAppOpener.openMessage(withMessageID: messageID)
+        } else {
+            openGmailInbox()
+        }
+    }
+
+    static func openInGmailBrowser(messageID: String?) {
         guard let messageID = messageID else {
             openGmailInbox()
             return
