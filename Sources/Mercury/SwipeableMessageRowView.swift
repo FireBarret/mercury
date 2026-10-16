@@ -25,6 +25,12 @@ final class SwipeableMessageRowView: NSView {
     private var gestureAccumulator: CGFloat = 0
     private var isTrackingGesture = false
     private var pastCommitPoint = false
+    private var animationTimer: Timer?
+    private var springTarget: CGFloat = 0
+    private var springVelocity: CGFloat = 0
+    private var lastTick: CFTimeInterval = 0
+    private let leftRevealMask = CALayer()
+    private let rightRevealMask = CALayer()
     private var isHovered = false
     private var trackingArea: NSTrackingArea?
 
@@ -60,6 +66,8 @@ final class SwipeableMessageRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    deinit { animationTimer?.invalidate() }
+
     private func buildUI(attributedText: NSAttributedString) {
         addSubview(leftActionsContainer)
         addSubview(rightActionsContainer)
@@ -76,6 +84,10 @@ final class SwipeableMessageRowView: NSView {
         }
         rightActionsContainer.isHidden = true
         leftActionsContainer.isHidden = true
+        leftRevealMask.backgroundColor = NSColor.black.cgColor
+        rightRevealMask.backgroundColor = NSColor.black.cgColor
+        leftActionsContainer.layer?.mask = leftRevealMask
+        rightActionsContainer.layer?.mask = rightRevealMask
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = restingBackgroundColor.cgColor
         // The content block keeps its own rounded corners so it still reads
@@ -204,6 +216,7 @@ final class SwipeableMessageRowView: NSView {
         layoutActionButtons(in: leftActionsContainer, buttons: leftButtons, fromInnerEdge: .right)
         layoutActionButtons(in: rightActionsContainer, buttons: rightButtons, fromInnerEdge: .left)
         contentContainer.frame = NSRect(x: contentOffset, y: 0, width: bounds.width, height: bounds.height)
+        updateRevealMasks()
     }
 
     private enum InnerEdge { case left, right }
@@ -228,50 +241,67 @@ final class SwipeableMessageRowView: NSView {
         }
     }
 
-    /// Moves the content without going through `layout()`, so an animated
-    /// slide isn't immediately overwritten by a direct frame assignment.
-    /// Only the side being revealed is shown: the opposite container sits
-    /// under the far end of the row and would otherwise peek out when the
-    /// content is dragged a long way.
+    /// Moves the content to `value`. Animated moves run a small critically
+    /// damped spring driven by a timer: the content frame, the side
+    /// visibility and the reveal masks all update together every tick,
+    /// so nothing depends on Core Animation picking up a layer change.
     private func setOffset(_ value: CGFloat, animated: Bool) {
-        contentOffset = value
-        let origin = NSPoint(x: value, y: 0)
-
-        if value > 0 {
-            leftActionsContainer.isHidden = false
-            rightActionsContainer.isHidden = true
-        } else if value < 0 {
-            rightActionsContainer.isHidden = false
-            leftActionsContainer.isHidden = true
-        }
-
-        guard animated, let layer = contentContainer.layer else {
-            contentContainer.setFrameOrigin(origin)
-            if value == 0 {
-                leftActionsContainer.isHidden = true
-                rightActionsContainer.isHidden = true
-            }
+        animationTimer?.invalidate()
+        animationTimer = nil
+        guard animated, abs(value - contentOffset) > 0.5 else {
+            applyOffset(value)
             return
         }
+        springTarget = value
+        springVelocity = 0
+        lastTick = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
 
-        let oldX = layer.presentation()?.position.x ?? layer.position.x
-        contentContainer.setFrameOrigin(origin)
-        let newX = layer.position.x
-
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            guard let self = self, self.contentOffset == 0 else { return }
-            self.leftActionsContainer.isHidden = true
-            self.rightActionsContainer.isHidden = true
+    private func tick() {
+        let now = CACurrentMediaTime()
+        let dt = CGFloat(min(now - lastTick, 1.0 / 30.0))
+        lastTick = now
+        // Critically damped: no bounce, settles in roughly 0.6s.
+        let stiffness: CGFloat = 110
+        let damping: CGFloat = 21
+        let acceleration = -stiffness * (contentOffset - springTarget) - damping * springVelocity
+        springVelocity += acceleration * dt
+        let next = contentOffset + springVelocity * dt
+        if abs(next - springTarget) < 0.4, abs(springVelocity) < 4 {
+            animationTimer?.invalidate()
+            animationTimer = nil
+            applyOffset(springTarget)
+        } else {
+            applyOffset(next)
         }
-        let spring = CASpringAnimation(keyPath: "position.x")
-        spring.fromValue = oldX
-        spring.toValue = newX
-        spring.mass = 1
-        spring.stiffness = 260
-        spring.damping = 22
-        spring.duration = spring.settlingDuration
-        layer.add(spring, forKey: "slide")
+    }
+
+    /// Only the side being revealed is shown, and masked to exactly the
+    /// uncovered strip -- over Liquid Glass the row is translucent, so
+    /// anything underneath it would otherwise show through.
+    private func applyOffset(_ value: CGFloat) {
+        contentOffset = value
+        contentContainer.setFrameOrigin(NSPoint(x: value, y: 0))
+        leftActionsContainer.isHidden = value <= 0
+        rightActionsContainer.isHidden = value >= 0
+        updateRevealMasks()
+    }
+
+    private func updateRevealMasks() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        leftRevealMask.frame = CGRect(
+            x: 0, y: 0,
+            width: max(0, contentOffset), height: leftActionsContainer.bounds.height
+        )
+        let revealed = max(0, -contentOffset)
+        rightRevealMask.frame = CGRect(
+            x: rightActionsContainer.bounds.width - revealed, y: 0,
+            width: revealed, height: rightActionsContainer.bounds.height
+        )
         CATransaction.commit()
     }
 
@@ -318,6 +348,8 @@ final class SwipeableMessageRowView: NSView {
         switch event.phase {
         case .began:
             isTrackingGesture = true
+            animationTimer?.invalidate()
+            animationTimer = nil
             gestureAccumulator = contentOffset
             pastCommitPoint = false
         case .changed:
