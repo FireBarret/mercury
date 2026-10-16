@@ -167,6 +167,14 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: mailAppRefreshModeKey) }
     }
 
+    /// Liquid Glass background for the custom panel (macOS 26+; older
+    /// systems keep the standard blur). The classic NSMenu is drawn by the
+    /// system, so this has no effect there.
+    static var useGlassEffect: Bool {
+        get { UserDefaults.standard.bool(forKey: "Mercury.useGlassEffect") }
+        set { UserDefaults.standard.set(newValue, forKey: "Mercury.useGlassEffect") }
+    }
+
     static var recentListOrder: RecentListOrder {
         get {
             guard let raw = UserDefaults.standard.string(forKey: "Mercury.recentListOrder") else { return .unreadFirst }

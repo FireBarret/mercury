@@ -127,6 +127,7 @@ final class StatusBarController {
     /// doesn't allow both a menu and a custom click action on one status
     /// item at once.
     func applyInterfaceMode() {
+        customPanelController?.refreshBackground()
         if Settings.useCustomPanel {
             statusItem.menu = nil
             statusItem.button?.target = self

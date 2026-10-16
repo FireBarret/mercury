@@ -5,8 +5,36 @@ import AppKit
 /// status (a click outside it) can auto-dismiss it, the same way an NSMenu
 /// closes when you click away.
 private final class FloatingPanel: NSPanel {
+    var onPreferences: (() -> Void)?
+    var onQuit: (() -> Void)?
+    var onCancel: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// Mercury has no main menu, so Cmd+, / Cmd+Q never reach a menu item
+    /// here -- handle them directly while the panel is key.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command {
+            switch event.charactersIgnoringModifiers {
+            case ",": onPreferences?(); return true
+            case "q": onQuit?(); return true
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+}
+
+/// Holds the panel's content. Accepts the first click so the click that
+/// activates the panel isn't swallowed.
+private final class PanelContentView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// A borderless NSButton that highlights as the cursor passes over it.
@@ -68,7 +96,8 @@ private final class HoverButton: NSButton {
 /// something reproduced here with confidence.
 final class CustomPanelController: NSObject, NSWindowDelegate {
     private let panel: FloatingPanel
-    private let visualEffectView = NSVisualEffectView()
+    private let contentHolder = PanelContentView()
+    private var backgroundView: NSView?
     private let outerStack = NSStackView()
     private let statusLabel = NSTextField(labelWithString: "Checking…")
     private let messagesStack = NSStackView()
@@ -126,33 +155,28 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
+        panel.onPreferences = { [weak self] in self?.onPreferences(); self?.hide() }
+        panel.onQuit = { [weak self] in self?.onQuit() }
+        panel.onCancel = { [weak self] in self?.hide() }
 
         buildUI()
     }
 
     private func buildUI() {
-        visualEffectView.material = .popover
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.state = .active
-        visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = 18
-        visualEffectView.layer?.masksToBounds = true
-        visualEffectView.layer?.borderWidth = 0.5
-        visualEffectView.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        panel.contentView = visualEffectView
-
+        contentHolder.translatesAutoresizingMaskIntoConstraints = false
         outerStack.orientation = .vertical
         outerStack.alignment = .width
         outerStack.spacing = 8
         outerStack.translatesAutoresizingMaskIntoConstraints = false
-        visualEffectView.addSubview(outerStack)
+        contentHolder.addSubview(outerStack)
         NSLayoutConstraint.activate([
-            outerStack.topAnchor.constraint(equalTo: visualEffectView.topAnchor, constant: 12),
-            outerStack.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor, constant: -12),
-            outerStack.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-            outerStack.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-            visualEffectView.widthAnchor.constraint(equalToConstant: panelWidth)
+            outerStack.topAnchor.constraint(equalTo: contentHolder.topAnchor, constant: 12),
+            outerStack.bottomAnchor.constraint(equalTo: contentHolder.bottomAnchor, constant: -12),
+            outerStack.leadingAnchor.constraint(equalTo: contentHolder.leadingAnchor),
+            outerStack.trailingAnchor.constraint(equalTo: contentHolder.trailingAnchor),
+            contentHolder.widthAnchor.constraint(equalToConstant: panelWidth)
         ])
+        refreshBackground()
 
         statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
         statusLabel.textColor = .secondaryLabelColor
@@ -186,6 +210,41 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     /// was the root cause of the first real-world test showing half-width,
     /// right-hugged rows) -- every section pins its own width explicitly to
     /// panelWidth instead of trusting alignment alone.
+    /// (Re)builds the panel background: Liquid Glass when enabled and
+    /// available (content goes inside its contentView, the only part Apple
+    /// guarantees sits within the glass), otherwise the standard blur.
+    func refreshBackground() {
+        contentHolder.removeFromSuperview()
+        let background: NSView
+        if Settings.useGlassEffect, #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = 22
+            glass.contentView = contentHolder
+            background = glass
+        } else {
+            let blur = NSVisualEffectView()
+            blur.material = .popover
+            blur.blendingMode = .behindWindow
+            blur.state = .active
+            blur.wantsLayer = true
+            blur.layer?.cornerRadius = 18
+            blur.layer?.masksToBounds = true
+            blur.layer?.borderWidth = 0.5
+            blur.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
+            blur.addSubview(contentHolder)
+            NSLayoutConstraint.activate([
+                contentHolder.topAnchor.constraint(equalTo: blur.topAnchor),
+                contentHolder.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
+                contentHolder.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
+                contentHolder.trailingAnchor.constraint(equalTo: blur.trailingAnchor)
+            ])
+            background = blur
+        }
+        background.toolTip = backgroundView?.toolTip
+        backgroundView = background
+        panel.contentView = background
+    }
+
     private func padded(_ view: NSView) -> NSView {
         let container = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -244,7 +303,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     }
 
     func updateConnectionStatus(_ status: String) {
-        panel.contentView?.toolTip = status
+        backgroundView?.toolTip = status
     }
 
     /// Rebuilds the message list -- 1 or 2 account sections, each a small

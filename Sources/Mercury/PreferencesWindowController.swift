@@ -27,6 +27,11 @@ final class PreferencesWindowController: NSWindowController {
         target: nil,
         action: nil
     )
+    private let glassCheckbox = NSButton(
+        checkboxWithTitle: "Liquid Glass look (macOS 26+, swipeable panel only)",
+        target: nil,
+        action: nil
+    )
     private let shortcutRecorder = ShortcutRecorderView()
 
     private let mailAppRefreshPopUp = NSPopUpButton()
@@ -233,6 +238,10 @@ final class PreferencesWindowController: NSWindowController {
         playSoundCheckbox.action = #selector(playSoundToggled)
         playSoundCheckbox.state = Settings.playNotificationSound ? .on : .off
 
+        glassCheckbox.target = self
+        glassCheckbox.action = #selector(glassToggled)
+        glassCheckbox.state = Settings.useGlassEffect ? .on : .off
+
         let shortcutLabel = NSTextField(labelWithString: "Open menu shortcut:")
         if let keyCode = Settings.shortcutKeyCode, let modifiers = Settings.shortcutModifiers {
             let flags = ShortcutRecorderView.modifierFlags(fromCarbon: modifiers)
@@ -248,7 +257,7 @@ final class PreferencesWindowController: NSWindowController {
         shortcutRow.spacing = 8
 
         let optionsStack = NSStackView(views: [
-            launchAtLoginCheckbox, previewsCheckbox, playSoundCheckbox, shortcutLabel, shortcutRow
+            launchAtLoginCheckbox, previewsCheckbox, playSoundCheckbox, glassCheckbox, shortcutLabel, shortcutRow
         ])
         optionsStack.orientation = .vertical
         optionsStack.alignment = .leading
@@ -462,6 +471,11 @@ final class PreferencesWindowController: NSWindowController {
         let actions = MailOpenAction.allCases
         guard index >= 0, index < actions.count else { return }
         Settings.openMailAction = actions[index]
+    }
+
+    @objc private func glassToggled() {
+        Settings.useGlassEffect = (glassCheckbox.state == .on)
+        onDisplaySettingsChanged()
     }
 
     @objc private func orderChanged() {

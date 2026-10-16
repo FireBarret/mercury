@@ -24,6 +24,7 @@ final class SwipeableMessageRowView: NSView {
     private var contentOffset: CGFloat = 0
     private var gestureAccumulator: CGFloat = 0
     private var isTrackingGesture = false
+    private var pastCommitPoint = false
     private var isHovered = false
     private var trackingArea: NSTrackingArea?
 
@@ -54,8 +55,6 @@ final class SwipeableMessageRowView: NSView {
         self.message = message
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 50))
         wantsLayer = true
-        layer?.cornerRadius = cornerRadius
-        layer?.masksToBounds = true
         buildUI(attributedText: attributedText)
     }
 
@@ -68,6 +67,15 @@ final class SwipeableMessageRowView: NSView {
 
         leftActionsContainer.wantsLayer = true
         rightActionsContainer.wantsLayer = true
+        // Each layer rounds and clips itself. Also masking on the parent
+        // row stacked two anti-aliased edges on top of each other, leaving
+        // a light fringe in the corners.
+        for container in [leftActionsContainer, rightActionsContainer] {
+            container.layer?.cornerRadius = cornerRadius
+            container.layer?.masksToBounds = true
+        }
+        rightActionsContainer.isHidden = true
+        leftActionsContainer.isHidden = true
         contentContainer.wantsLayer = true
         contentContainer.layer?.backgroundColor = restingBackgroundColor.cgColor
         // The content block keeps its own rounded corners so it still reads
@@ -125,8 +133,15 @@ final class SwipeableMessageRowView: NSView {
         return message.isUnread ? "envelope.open.fill" : "envelope.fill"
     }
 
-    private var restingBackgroundColor: NSColor { .windowBackgroundColor }
-    private var hoveredBackgroundColor: NSColor { .unemphasizedSelectedContentBackgroundColor }
+    // Over Liquid Glass the rows must stay translucent so the glass shows
+    // through; an opaque fill would just paint a flat tile over it.
+    private let usesGlass = Settings.useGlassEffect
+    private var restingBackgroundColor: NSColor {
+        usesGlass ? NSColor.labelColor.withAlphaComponent(0.07) : .windowBackgroundColor
+    }
+    private var hoveredBackgroundColor: NSColor {
+        usesGlass ? NSColor.labelColor.withAlphaComponent(0.14) : .unemphasizedSelectedContentBackgroundColor
+    }
 
     // MARK: - Hover
 
@@ -214,20 +229,64 @@ final class SwipeableMessageRowView: NSView {
     }
 
     /// Moves the content without going through `layout()`, so an animated
-    /// slide isn't immediately overwritten by a direct frame assignment
-    /// (which is what previously made the "animation" snap instantly).
+    /// slide isn't immediately overwritten by a direct frame assignment.
+    /// Only the side being revealed is shown: the opposite container sits
+    /// under the far end of the row and would otherwise peek out when the
+    /// content is dragged a long way.
     private func setOffset(_ value: CGFloat, animated: Bool) {
         contentOffset = value
         let origin = NSPoint(x: value, y: 0)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                contentContainer.animator().setFrameOrigin(origin)
-            }
-        } else {
-            contentContainer.setFrameOrigin(origin)
+
+        if value > 0 {
+            leftActionsContainer.isHidden = false
+            rightActionsContainer.isHidden = true
+        } else if value < 0 {
+            rightActionsContainer.isHidden = false
+            leftActionsContainer.isHidden = true
         }
+
+        guard animated, let layer = contentContainer.layer else {
+            contentContainer.setFrameOrigin(origin)
+            if value == 0 {
+                leftActionsContainer.isHidden = true
+                rightActionsContainer.isHidden = true
+            }
+            return
+        }
+
+        let oldX = layer.presentation()?.position.x ?? layer.position.x
+        contentContainer.setFrameOrigin(origin)
+        let newX = layer.position.x
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self = self, self.contentOffset == 0 else { return }
+            self.leftActionsContainer.isHidden = true
+            self.rightActionsContainer.isHidden = true
+        }
+        let spring = CASpringAnimation(keyPath: "position.x")
+        spring.fromValue = oldX
+        spring.toValue = newX
+        spring.mass = 1
+        spring.stiffness = 260
+        spring.damping = 22
+        spring.duration = spring.settlingDuration
+        layer.add(spring, forKey: "slide")
+        CATransaction.commit()
+    }
+
+    /// Follows the finger 1:1 up to the fully-open position, then applies
+    /// diminishing returns so pulling further feels like stretching rather
+    /// than sliding the row off-screen.
+    private func rubberBanded(_ raw: CGFloat) -> CGFloat {
+        let open = raw >= 0 ? leftOpenWidth : rightOpenWidth
+        let hasButtons = raw >= 0 ? !leftButtons.isEmpty : !rightButtons.isEmpty
+        guard hasButtons else { return 0 }
+        let magnitude = abs(raw)
+        guard magnitude > open else { return raw }
+        let excess = magnitude - open
+        let stretched = open + dragOvershoot * (1 - exp(-excess / dragOvershoot))
+        return raw >= 0 ? stretched : -stretched
     }
 
     @objc private func tapped() {
@@ -260,12 +319,19 @@ final class SwipeableMessageRowView: NSView {
         case .began:
             isTrackingGesture = true
             gestureAccumulator = contentOffset
+            pastCommitPoint = false
         case .changed:
             guard isTrackingGesture else { break }
             gestureAccumulator += event.scrollingDeltaX * directionMultiplier
-            let upper = leftButtons.isEmpty ? 0 : leftOpenWidth + dragOvershoot
-            let lower = rightButtons.isEmpty ? 0 : -(rightOpenWidth + dragOvershoot)
-            setOffset(max(lower, min(upper, gestureAccumulator)), animated: false)
+            setOffset(rubberBanded(gestureAccumulator), animated: false)
+            let beyond = gestureAccumulator > leftOpenWidth + commitOvershoot && !leftButtons.isEmpty
+                || gestureAccumulator < -(rightOpenWidth + commitOvershoot) && !rightButtons.isEmpty
+            if beyond != pastCommitPoint {
+                pastCommitPoint = beyond
+                // A light tick when the far-swipe action becomes armed
+                // (and again when it disarms), like iOS's swipe actions.
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
         case .ended, .cancelled:
             guard isTrackingGesture else { break }
             isTrackingGesture = false
@@ -276,18 +342,19 @@ final class SwipeableMessageRowView: NSView {
     }
 
     private func finishGesture() {
+        let raw = gestureAccumulator
         let outermostLeft = leftButtons.last?.action
         let outermostRight = rightButtons.last?.action
 
-        if !leftButtons.isEmpty, contentOffset > leftOpenWidth + commitOvershoot {
+        if !leftButtons.isEmpty, raw > leftOpenWidth + commitOvershoot {
             setOffset(0, animated: true)
             if let action = outermostLeft { onAction?(action) }
-        } else if !leftButtons.isEmpty, contentOffset > revealThreshold {
+        } else if !leftButtons.isEmpty, raw > revealThreshold {
             setOffset(leftOpenWidth, animated: true)
-        } else if !rightButtons.isEmpty, contentOffset < -(rightOpenWidth + commitOvershoot) {
+        } else if !rightButtons.isEmpty, raw < -(rightOpenWidth + commitOvershoot) {
             setOffset(0, animated: true)
             if let action = outermostRight { onAction?(action) }
-        } else if !rightButtons.isEmpty, contentOffset < -revealThreshold {
+        } else if !rightButtons.isEmpty, raw < -revealThreshold {
             setOffset(-rightOpenWidth, animated: true)
         } else {
             setOffset(0, animated: true)
