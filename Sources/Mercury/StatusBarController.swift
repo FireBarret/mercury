@@ -12,7 +12,15 @@ final class StatusBarController {
     // .variableLength lets the button's width track its actual content
     // (image + title) automatically -- important now that the dual-account
     // count is real title text of varying width, not a fixed-size bitmap.
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem: NSStatusItem = {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Stable identity: without a name the system assigns "Item-N" by
+        // creation order, which menu-bar managers (Ice, Thaw, Bartender)
+        // and macOS itself can't reliably track across launches, so the
+        // item's position/hidden state gets lost or duplicated.
+        item.autosaveName = "MercuryStatusItem"
+        return item
+    }()
     private let menu = NSMenu()
     private let statusLabelItem = NSMenuItem(title: "Checking…", action: nil, keyEquivalent: "")
     private let recentHeaderItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
@@ -132,8 +140,25 @@ final class StatusBarController {
     }
 
     @objc private func statusItemClicked() {
-        guard let button = statusItem.button else { return }
-        customPanelController?.toggle(relativeTo: button)
+        customPanelController?.toggle(anchorFrame: visibleButtonFrame())
+    }
+
+    /// The status button's screen frame, or nil when it isn't actually
+    /// visible -- menu-bar managers hide items by pushing them off-screen
+    /// (or into a collapsed section), where anchoring to the frame would
+    /// put the panel/menu somewhere unreachable.
+    private func visibleButtonFrame() -> NSRect? {
+        guard let window = statusItem.button?.window else { return nil }
+        let frame = window.frame
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        let onScreen = NSScreen.screens.contains { $0.frame.contains(center) }
+        let visible = window.occlusionState.contains(.visible)
+        guard onScreen, visible else {
+            NSLog("Mercury: status item not visible (frame=%@, onScreen=%d, visible=%d); using fallback anchor",
+                  NSStringFromRect(frame), onScreen ? 1 : 0, visible ? 1 : 0)
+            return nil
+        }
+        return frame
     }
 
     private func makeItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
@@ -175,7 +200,18 @@ final class StatusBarController {
     /// native NSMenu behavior, no extra code needed.
     func showMenu() {
         NSLog("Mercury: global shortcut fired, opening menu")
-        statusItem.button?.performClick(nil)
+        let anchor = visibleButtonFrame()
+        if Settings.useCustomPanel {
+            customPanelController?.toggle(anchorFrame: anchor)
+        } else if anchor != nil {
+            statusItem.button?.performClick(nil)
+        } else {
+            // Item is hidden by a menu-bar manager: performClick would
+            // open the menu off-screen, so pop it at the screen's top-right.
+            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+            let area = screen?.visibleFrame ?? .zero
+            menu.popUp(positioning: nil, at: NSPoint(x: area.maxX - menu.size.width - 8, y: area.maxY), in: nil)
+        }
     }
 
     /// Renders 1 or 2 configured accounts. With 1 account this looks exactly

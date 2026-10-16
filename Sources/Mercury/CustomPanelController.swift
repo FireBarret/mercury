@@ -75,6 +75,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     private let pauseButton: NSButton
 
     private let panelWidth: CGFloat = 340
+    private var clickAwayMonitor: Any?
 
     private let onCheckNow: () -> Void
     private let onOpenGmail: () -> Void
@@ -331,30 +332,63 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         return result
     }
 
-    /// Toggles the panel open/closed, positioned just under the given
-    /// status-bar button -- mirrors how NSMenu anchors itself to the status
-    /// item automatically, which a plain NSPanel doesn't do for free.
-    func toggle(relativeTo button: NSStatusBarButton) {
+    /// Toggles the panel open/closed under the status item. `anchorFrame`
+    /// is the status button's screen frame, or nil when the item isn't
+    /// visibly on screen (hidden by a menu-bar manager, behind the notch),
+    /// in which case the panel anchors to the top-right of the screen the
+    /// mouse is on instead.
+    func toggle(anchorFrame: NSRect?) {
         if panel.isVisible {
             hide()
         } else {
-            show(relativeTo: button)
+            show(anchorFrame: anchorFrame)
         }
     }
 
-    private func show(relativeTo button: NSStatusBarButton) {
-        guard let buttonWindow = button.window else { return }
+    private func show(anchorFrame: NSRect?) {
         outerStack.layoutSubtreeIfNeeded()
-        let height = outerStack.fittingSize.height + 24
-        let buttonFrame = buttonWindow.frame
-        let origin = NSPoint(x: buttonFrame.minX - (panelWidth - buttonFrame.width) / 2, y: buttonFrame.minY - height - 4)
-        panel.setFrame(NSRect(x: origin.x, y: origin.y, width: panelWidth, height: height), display: true)
+        let screen = anchorFrame.flatMap { frame in
+            NSScreen.screens.first { $0.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) }
+        } ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        let height = min(outerStack.fittingSize.height + 24, area.height - 16)
+        let desiredX = anchorFrame.map { $0.midX - panelWidth / 2 } ?? (area.maxX - panelWidth - 8)
+        let topY = anchorFrame.map { $0.minY - 4 } ?? area.maxY - 4
+        let x = max(area.minX + 8, min(desiredX, area.maxX - panelWidth - 8))
+        let y = max(area.minY + 8, topY - height)
+        NSLog("Mercury: showing panel at (%.0f, %.0f) anchor=%@", x, y, anchorFrame.map { NSStringFromRect($0) } ?? "fallback")
+
+        panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: height), display: true)
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        installClickAwayMonitor()
     }
 
     func hide() {
+        removeClickAwayMonitor()
         panel.orderOut(nil)
+    }
+
+    /// Dismissal can't rely on resigning key alone: with cooperative
+    /// activation (macOS 14+) the panel isn't guaranteed to ever become
+    /// key, so clicks elsewhere would leave it stuck open.
+    private func installClickAwayMonitor() {
+        removeClickAwayMonitor()
+        clickAwayMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.hide()
+        }
+    }
+
+    private func removeClickAwayMonitor() {
+        if let monitor = clickAwayMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickAwayMonitor = nil
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
