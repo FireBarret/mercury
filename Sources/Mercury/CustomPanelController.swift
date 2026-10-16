@@ -216,10 +216,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     func refreshBackground() {
         contentHolder.removeFromSuperview()
         let background: NSView
-        if Settings.useGlassEffect, #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = 22
-            glass.contentView = contentHolder
+        if let glass = makeGlassBackground() {
             background = glass
         } else {
             let blur = NSVisualEffectView()
@@ -243,6 +240,20 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         background.toolTip = backgroundView?.toolTip
         backgroundView = background
         panel.contentView = background
+    }
+
+    /// NSGlassEffectView only exists in the macOS 26 SDK; the compile-time
+    /// guard keeps the project building on older toolchains (e.g. CI).
+    private func makeGlassBackground() -> NSView? {
+        #if compiler(>=6.2)
+        if Settings.useGlassEffect, #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = 22
+            glass.contentView = contentHolder
+            return glass
+        }
+        #endif
+        return nil
     }
 
     private func padded(_ view: NSView) -> NSView {
