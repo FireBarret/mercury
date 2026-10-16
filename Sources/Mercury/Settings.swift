@@ -53,6 +53,20 @@ enum MailOpenAction: String, CaseIterable {
     }
 }
 
+enum RecentListOrder: String, CaseIterable {
+    /// Unread mail first (including old unread mail), then newest read.
+    case unreadFirst
+    /// Strictly the newest messages, regardless of read state.
+    case chronological
+
+    var displayName: String {
+        switch self {
+        case .unreadFirst: return "Unread first"
+        case .chronological: return "Newest first (chronological)"
+        }
+    }
+}
+
 enum MailAppRefreshMode: String, CaseIterable {
     /// Launch it if needed, tell it to check for new mail, then quit it
     /// again -- but only if it wasn't already running.
@@ -151,6 +165,14 @@ enum Settings {
             return .hideAfterRefresh
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: mailAppRefreshModeKey) }
+    }
+
+    static var recentListOrder: RecentListOrder {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "Mercury.recentListOrder") else { return .unreadFirst }
+            return RecentListOrder(rawValue: raw) ?? .unreadFirst
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "Mercury.recentListOrder") }
     }
 
     static var openMailAction: MailOpenAction {

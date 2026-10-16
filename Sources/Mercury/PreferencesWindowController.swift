@@ -31,6 +31,7 @@ final class PreferencesWindowController: NSWindowController {
 
     private let mailAppRefreshPopUp = NSPopUpButton()
     private let openInPopUp = NSPopUpButton()
+    private let orderPopUp = NSPopUpButton()
     private let minCountStepper = NSStepper()
     private let minCountValueLabel = NSTextField(labelWithString: "")
     private let maxCountStepper = NSStepper()
@@ -284,6 +285,18 @@ final class PreferencesWindowController: NSWindowController {
         openInRow.orientation = .horizontal
         openInRow.spacing = 8
 
+        let orderLabel = NSTextField(labelWithString: "Recent list order:")
+        orderPopUp.removeAllItems()
+        orderPopUp.addItems(withTitles: RecentListOrder.allCases.map { $0.displayName })
+        if let index = RecentListOrder.allCases.firstIndex(of: Settings.recentListOrder) {
+            orderPopUp.selectItem(at: index)
+        }
+        orderPopUp.target = self
+        orderPopUp.action = #selector(orderChanged)
+        let orderRow = NSStackView(views: [orderLabel, orderPopUp])
+        orderRow.orientation = .horizontal
+        orderRow.spacing = 8
+
         minCountStepper.minValue = 1
         minCountStepper.maxValue = 20
         minCountStepper.increment = 1
@@ -309,7 +322,7 @@ final class PreferencesWindowController: NSWindowController {
         maxCountRow.spacing = 6
 
         let mailBehaviorStack = NSStackView(views: [
-            showRecentCheckbox, mailAppRefreshRow, openInRow, minCountRow, maxCountRow
+            showRecentCheckbox, mailAppRefreshRow, openInRow, orderRow, minCountRow, maxCountRow
         ])
         mailBehaviorStack.orientation = .vertical
         mailBehaviorStack.alignment = .leading
@@ -449,6 +462,14 @@ final class PreferencesWindowController: NSWindowController {
         let actions = MailOpenAction.allCases
         guard index >= 0, index < actions.count else { return }
         Settings.openMailAction = actions[index]
+    }
+
+    @objc private func orderChanged() {
+        let index = orderPopUp.indexOfSelectedItem
+        let orders = RecentListOrder.allCases
+        guard index >= 0, index < orders.count else { return }
+        Settings.recentListOrder = orders[index]
+        onDisplaySettingsChanged()
     }
 
     @objc private func minCountChanged() {

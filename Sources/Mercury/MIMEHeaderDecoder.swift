@@ -2,21 +2,33 @@ import Foundation
 
 /// Decodes RFC 2047 encoded-words (e.g. "=?UTF-8?B?....?=") that Gmail uses
 /// in From/Subject headers whenever they contain non-ASCII characters.
+///
+/// Adjacent encoded-words (whitespace-only between them) are merged at the
+/// *byte* level before decoding: senders split long non-ASCII text across
+/// several words, often in the middle of a multi-byte character, so each
+/// word alone is invalid UTF-8 and only decodes once re-joined.
 func decodeMIMEHeader(_ raw: String) -> String {
     guard raw.contains("=?") else { return raw }
 
     var result = ""
-    var remainder = Substring(raw)
+    var run: (charset: String, bytes: [UInt8])?
+    var pendingSpace = ""
 
+    func flushRun() {
+        if let r = run {
+            result += decodeBytes(r.bytes, charset: r.charset)
+            run = nil
+        }
+    }
+
+    var remainder = Substring(raw)
     while let start = remainder.range(of: "=?") {
-        result += remainder[remainder.startIndex..<start.lowerBound]
+        let before = remainder[remainder.startIndex..<start.lowerBound]
         let afterStart = remainder[start.upperBound...]
 
         guard let q1 = afterStart.firstIndex(of: "?"),
               let q2 = afterStart[afterStart.index(after: q1)...].firstIndex(of: "?"),
               let end = afterStart[afterStart.index(after: q2)...].range(of: "?=") else {
-            result += remainder[start.lowerBound...]
-            remainder = Substring("")
             break
         }
 
@@ -24,33 +36,37 @@ func decodeMIMEHeader(_ raw: String) -> String {
         let encoding = String(afterStart[afterStart.index(after: q1)..<q2])
         let payload = String(afterStart[afterStart.index(after: q2)..<end.lowerBound])
 
-        if let decoded = decodeEncodedWord(charset: charset, encoding: encoding, payload: payload) {
-            result += decoded
-        } else {
-            result += "=?\(charset)?\(encoding)?\(payload)?="
+        guard let bytes = encodedWordBytes(encoding: encoding, payload: payload) else {
+            // Not decodable: emit it verbatim as plain text.
+            flushRun()
+            result += pendingSpace + before + "=?\(charset)?\(encoding)?\(payload)?="
+            pendingSpace = ""
+            remainder = afterStart[end.upperBound...]
+            continue
         }
 
-        remainder = afterStart[end.upperBound...]
-        // RFC 2047 says adjacent encoded-words separated only by whitespace should
-        // have that whitespace collapsed; skip a single separating space/newline.
-        if remainder.first == " " {
-            let lookahead = remainder.dropFirst()
-            if lookahead.hasPrefix("=?") {
-                remainder = lookahead
-            }
+        if run != nil, before.allSatisfy({ $0.isWhitespace }), run?.charset.uppercased() == charset.uppercased() {
+            run?.bytes += bytes
+        } else {
+            flushRun()
+            result += pendingSpace + before
+            run = (charset, bytes)
         }
+        pendingSpace = ""
+        remainder = afterStart[end.upperBound...]
     }
-    result += remainder
+
+    // Whitespace directly after a word that's followed by plain text is real.
+    flushRun()
+    result += pendingSpace + remainder
     return result
 }
 
-private func decodeEncodedWord(charset: String, encoding: String, payload: String) -> String? {
-    let stringEncoding = foundationEncoding(forCharset: charset)
-
+private func encodedWordBytes(encoding: String, payload: String) -> [UInt8]? {
     switch encoding.uppercased() {
     case "B":
         guard let data = Data(base64Encoded: payload) else { return nil }
-        return String(data: data, encoding: stringEncoding) ?? String(data: data, encoding: .utf8)
+        return [UInt8](data)
     case "Q":
         var bytes: [UInt8] = []
         let chars = Array(payload)
@@ -69,10 +85,17 @@ private func decodeEncodedWord(charset: String, encoding: String, payload: Strin
                 i += 1
             }
         }
-        return String(bytes: bytes, encoding: stringEncoding) ?? String(bytes: bytes, encoding: .utf8)
+        return bytes
     default:
         return nil
     }
+}
+
+private func decodeBytes(_ bytes: [UInt8], charset: String) -> String {
+    let encoding = foundationEncoding(forCharset: charset)
+    return String(bytes: bytes, encoding: encoding)
+        ?? String(bytes: bytes, encoding: .utf8)
+        ?? String(decoding: bytes, as: UTF8.self)
 }
 
 /// Maps a MIME charset name (as seen in RFC 2047 encoded-words) to the

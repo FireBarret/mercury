@@ -654,6 +654,10 @@ final class IMAPClient {
         let total = knownMessageCount ?? 0
         guard total > 0, count > 0 else { return [] }
 
+        if Settings.recentListOrder == .chronological {
+            return Array(try fetchHeaders(from: max(1, total - count + 1), to: total).reversed())
+        }
+
         let unreadUIDs = Array(try searchUnseenUIDs().suffix(count))
         let unread = try fetchHeaders(uids: unreadUIDs).sorted { ($0.uid ?? 0) > ($1.uid ?? 0) }
 
