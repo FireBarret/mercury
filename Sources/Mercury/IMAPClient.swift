@@ -379,8 +379,30 @@ final class IMAPClient {
 
     private func fetchHeaders(from: Int, to: Int) throws -> [MailHeader] {
         guard from <= to else { return [] }
+        return try fetchHeaders(command: "FETCH \(from):\(to)")
+    }
+
+    private func fetchHeaders(uids: [Int]) throws -> [MailHeader] {
+        guard !uids.isEmpty else { return [] }
+        return try fetchHeaders(command: "UID FETCH \(uids.map(String.init).joined(separator: ","))")
+    }
+
+    private func searchUnseenUIDs() throws -> [Int] {
         let tag = nextTag()
-        try writeLine("\(tag) FETCH \(from):\(to) (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
+        try writeLine("\(tag) UID SEARCH UNSEEN")
+        let lines = try readUntilTagged(tag)
+        for line in lines where line.hasPrefix("* SEARCH") {
+            return line.dropFirst("* SEARCH".count)
+                .split(separator: " ")
+                .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .sorted()
+        }
+        return []
+    }
+
+    private func fetchHeaders(command: String) throws -> [MailHeader] {
+        let tag = nextTag()
+        try writeLine("\(tag) \(command) (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)])")
         let lines = try readUntilTagged(tag)
         var headers: [MailHeader] = []
         for line in lines where line.contains("FETCH") && line.contains("\n") {
@@ -624,12 +646,25 @@ final class IMAPClient {
         return min(maxCount, max(minCount, unread))
     }
 
-    /// The `count` most recent messages in the mailbox, newest first,
-    /// regardless of read/unread state.
+    /// Up to `count` messages for the recent list: unread mail always comes
+    /// first (newest first), including old unread mail that has since
+    /// scrolled past the newest messages, then the remaining slots are
+    /// filled with the newest read mail.
     private func fetchLatestMessages(count: Int) throws -> [MailHeader] {
         let total = knownMessageCount ?? 0
-        guard total > 0 else { return [] }
-        let from = max(1, total - count + 1)
-        return try Array(fetchHeaders(from: from, to: total).reversed())
+        guard total > 0, count > 0 else { return [] }
+
+        let unreadUIDs = Array(try searchUnseenUIDs().suffix(count))
+        let unread = try fetchHeaders(uids: unreadUIDs).sorted { ($0.uid ?? 0) > ($1.uid ?? 0) }
+
+        let remaining = count - unread.count
+        guard remaining > 0 else { return unread }
+
+        let unreadSet = Set(unreadUIDs)
+        let from = max(1, total - (remaining + unread.count) + 1)
+        let newest = try fetchHeaders(from: from, to: total).reversed()
+            .filter { !unreadSet.contains($0.uid ?? -1) }
+            .prefix(remaining)
+        return unread + newest
     }
 }
