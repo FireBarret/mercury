@@ -49,6 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onQuit: { NSApp.terminate(nil) }
         )
 
+        statusBarController?.onMenuOpenChanged = { [weak self] isOpen in
+            if isOpen {
+                self?.hotKeyManager.unregister()
+            } else {
+                self?.registerSavedShortcutIfNeeded()
+            }
+        }
+
         startAllConfiguredClients()
         registerSavedShortcutIfNeeded()
         showOnboardingIfNeeded()

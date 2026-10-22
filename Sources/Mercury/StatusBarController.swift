@@ -8,16 +8,55 @@ struct AccountDisplayState {
     let recentMessages: [MailHeader]
 }
 
-/// Tracks whether the classic dropdown is currently open, so the global
-/// shortcut can close it instead of queueing a reopen.
+/// Tracks whether the classic dropdown is open. While it is, the global
+/// shortcut's Carbon event is held back by menu tracking until the menu
+/// closes -- so pressing the shortcut again would otherwise just queue a
+/// reopen. A local key monitor catches the press during tracking and closes
+/// the menu, and presses delivered right after a close are dropped.
 private final class MenuOpenTracker: NSObject, NSMenuDelegate {
     private(set) var isOpen = false
-    func menuWillOpen(_ menu: NSMenu) { isOpen = true }
-    func menuDidClose(_ menu: NSMenu) { isOpen = false }
+    private(set) var lastCloseDate = Date.distantPast
+    private var monitor: Any?
+    var onOpenChanged: ((Bool) -> Void)?
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isOpen = true
+        onOpenChanged?(true)
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak menu] event in
+            guard let self = self, let menu = menu, self.matchesShortcut(event) else { return event }
+            NSLog("Mercury: shortcut pressed while menu open, closing it")
+            menu.cancelTracking()
+            return nil
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isOpen = false
+        lastCloseDate = Date()
+        onOpenChanged?(false)
+        if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private func matchesShortcut(_ event: NSEvent) -> Bool {
+        guard let keyCode = Settings.shortcutKeyCode, let modifiers = Settings.shortcutModifiers else { return false }
+        let wanted = ShortcutRecorderView.modifierFlags(fromCarbon: modifiers)
+        let pressed = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return UInt32(event.keyCode) == keyCode && pressed == wanted
+    }
 }
 
 final class StatusBarController {
     private let menuTracker = MenuOpenTracker()
+
+    /// Called with true when the dropdown opens and false when it closes.
+    /// The owner unregisters the global hotkey while it's open: Carbon holds
+    /// hotkey presses until menu tracking ends, whereas unregistered, the
+    /// press arrives as an ordinary key event that closes the menu.
+    var onMenuOpenChanged: ((Bool) -> Void)? {
+        get { menuTracker.onOpenChanged }
+        set { menuTracker.onOpenChanged = newValue }
+    }
     // .variableLength lets the button's width track its actual content
     // (image + title) automatically -- important now that the dual-account
     // count is real title text of varying width, not a fixed-size bitmap.
@@ -210,10 +249,17 @@ final class StatusBarController {
     /// the global keyboard shortcut. Arrow-key navigation once it's open is
     /// native NSMenu behavior, no extra code needed.
     func showMenu() {
-        if !Settings.useCustomPanel && menuTracker.isOpen {
-            // Pressing the shortcut again toggles the open dropdown closed.
-            menu.cancelTracking()
-            return
+        if !Settings.useCustomPanel {
+            if menuTracker.isOpen {
+                menu.cancelTracking()
+                return
+            }
+            // Presses made while the menu was open arrive right after it
+            // closes; swallow them rather than reopening.
+            if Date().timeIntervalSince(menuTracker.lastCloseDate) < 0.3 {
+                NSLog("Mercury: ignoring queued shortcut press after menu close")
+                return
+            }
         }
         NSLog("Mercury: global shortcut fired, opening menu")
         let anchor = visibleButtonFrame()
