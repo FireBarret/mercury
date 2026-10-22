@@ -21,16 +21,9 @@ polling, no need to keep Mail.app open, no Dock icon, no telemetry.
 
 ## Install
 
-**Download:** get the latest `.zip` from [Releases](../../releases), unzip it,
-and move `Mercury.app` to `/Applications`.
-
-Mercury is ad-hoc signed, not notarized, so macOS blocks it on first launch.
-Fix it once with either:
-
-- Terminal: `xattr -cr /Applications/Mercury.app`
-- System Settings → Privacy & Security → **Open Anyway**
-
-(Right-click → Open does not work for ad-hoc-signed apps.)
+**Download:** get the latest `Mercury.dmg` from [Releases](../../releases), open it,
+and drag `Mercury` to `Applications`. It is signed and notarized by Apple, so it
+opens without any Gatekeeper workaround.
 
 **Build it yourself** (needs only the Xcode Command Line Tools):
 

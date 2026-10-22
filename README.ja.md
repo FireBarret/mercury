@@ -21,16 +21,8 @@ Dock アイコンなし、テレメトリなしです。
 
 ## インストール
 
-**ダウンロード：** [Releases](../../releases) から最新の `.zip` を入手して展開し、`Mercury.app` を
-`/Applications` に移動します。
-
-Mercury はアドホック署名で、Apple の公証は受けていないため、初回起動時に macOS にブロックされます。
-次のどちらかで一度だけ解除してください。
-
-- ターミナル：`xattr -cr /Applications/Mercury.app`
-- システム設定 → プライバシーとセキュリティ → **このまま開く**
-
-（アドホック署名のアプリでは、右クリック → 開く は使えません。）
+**ダウンロード：** [Releases](../../releases) から最新の `Mercury.dmg` を入手して開き、`Mercury` を
+`Applications` にドラッグします。Apple による署名と公証済みのため、追加の操作なしで開けます。
 
 **自分でビルドする**（Xcode Command Line Tools のみ必要）：
 
