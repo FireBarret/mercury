@@ -8,7 +8,16 @@ struct AccountDisplayState {
     let recentMessages: [MailHeader]
 }
 
+/// Tracks whether the classic dropdown is currently open, so the global
+/// shortcut can close it instead of queueing a reopen.
+private final class MenuOpenTracker: NSObject, NSMenuDelegate {
+    private(set) var isOpen = false
+    func menuWillOpen(_ menu: NSMenu) { isOpen = true }
+    func menuDidClose(_ menu: NSMenu) { isOpen = false }
+}
+
 final class StatusBarController {
+    private let menuTracker = MenuOpenTracker()
     // .variableLength lets the button's width track its actual content
     // (image + title) automatically -- important now that the dual-account
     // count is real title text of varying width, not a fixed-size bitmap.
@@ -77,6 +86,7 @@ final class StatusBarController {
         statusItem.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Mail")
         statusItem.button?.imagePosition = .imageLeft
 
+        menu.delegate = menuTracker
         statusLabelItem.isEnabled = false
         recentHeaderItem.isEnabled = false
         recentHeaderItem.isHidden = true
@@ -200,6 +210,11 @@ final class StatusBarController {
     /// the global keyboard shortcut. Arrow-key navigation once it's open is
     /// native NSMenu behavior, no extra code needed.
     func showMenu() {
+        if !Settings.useCustomPanel && menuTracker.isOpen {
+            // Pressing the shortcut again toggles the open dropdown closed.
+            menu.cancelTracking()
+            return
+        }
         NSLog("Mercury: global shortcut fired, opening menu")
         let anchor = visibleButtonFrame()
         if Settings.useCustomPanel {
@@ -224,8 +239,15 @@ final class StatusBarController {
     /// graphical badges that don't have room to look clean at menu-bar
     /// scale. The "Recent" section splits into two, each labeled with that
     /// account's display name (custom, or "Mail 1"/"Mail 2" by default).
-    func update(accounts: [AccountDisplayState]) {
-        lastAccounts = accounts
+    func update(accounts rawAccounts: [AccountDisplayState]) {
+        lastAccounts = rawAccounts
+        // Accounts set to "hide when no unread" lose their recent list while
+        // they have nothing unread (empty sections hide themselves below).
+        let accounts = rawAccounts.map { account in
+            guard account.unreadCount == 0, Credentials.hideWhenNoUnread(for: account.slot) else { return account }
+            return AccountDisplayState(slot: account.slot, email: account.email, displayName: account.displayName,
+                                       unreadCount: 0, recentMessages: [])
+        }
         customPanelController?.update(accounts: accounts)
         let showRecent = Settings.showRecentMessagesInMenu
 
@@ -245,8 +267,8 @@ final class StatusBarController {
                 systemSymbolName: account.unreadCount > 0 ? "envelope.fill" : "envelope",
                 accessibilityDescription: "Mail"
             )
-            statusItem.button?.attributedTitle = NSAttributedString(string: "")
-            statusItem.button?.title = account.unreadCount > 0 ? " \(account.unreadCount)" : ""
+            statusItem.button?.title = ""
+            statusItem.button?.attributedTitle = MenuBarTitle.single(count: account.unreadCount)
             statusLabelItem.title = account.unreadCount > 0 ? "\(account.unreadCount) unread" : "No unread mail"
 
             renderSection(header: recentHeaderItem, items: &recentItems, messages: showRecent ? account.recentMessages : [], headerTitle: "Recent")
@@ -262,7 +284,7 @@ final class StatusBarController {
                 accessibilityDescription: "Mail"
             )
             statusItem.button?.title = ""
-            statusItem.button?.attributedTitle = dualCountTitle(primary: primary.unreadCount, secondary: secondary.unreadCount)
+            statusItem.button?.attributedTitle = MenuBarTitle.dual(primary: primary.unreadCount, secondary: secondary.unreadCount)
 
             let total = primary.unreadCount + secondary.unreadCount
             statusLabelItem.title = total > 0 ? "\(total) unread total" : "No unread mail"
@@ -271,37 +293,6 @@ final class StatusBarController {
             renderSection(header: recentHeaderItem2, items: &recentItems2, messages: showRecent ? secondary.recentMessages : [], headerTitle: secondary.displayName)
             interSectionDivider.isHidden = !showRecent
         }
-    }
-
-    /// Omits either number entirely when its account has no unread mail,
-    /// rather than always showing both (e.g. "0 · 3") -- saves space and
-    /// there's no ambiguity about which account a lone number belongs to
-    /// since it keeps that account's color (blue for primary, orange for
-    /// secondary).
-    private func dualCountTitle(primary: Int, secondary: Int) -> NSAttributedString {
-        guard primary > 0 || secondary > 0 else { return NSAttributedString(string: "") }
-
-        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        let result = NSMutableAttributedString(string: " ")
-        if primary > 0 {
-            result.append(NSAttributedString(
-                string: "\(primary)",
-                attributes: [.font: font, .foregroundColor: NSColor.systemBlue]
-            ))
-        }
-        if primary > 0 && secondary > 0 {
-            result.append(NSAttributedString(
-                string: " · ",
-                attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
-            ))
-        }
-        if secondary > 0 {
-            result.append(NSAttributedString(
-                string: "\(secondary)",
-                attributes: [.font: font, .foregroundColor: NSColor.systemOrange]
-            ))
-        }
-        return result
     }
 
     /// Clears every badge and unread dot immediately, ahead of the IMAP

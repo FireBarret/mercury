@@ -9,6 +9,7 @@ final class ShortcutRecorderView: NSView {
     var onShortcutChanged: ((_ keyCode: UInt32, _ carbonModifiers: UInt32, _ displayString: String) -> Void)?
 
     private let label = NSTextField(labelWithString: "")
+    private var currentDisplay = ""
     private var isRecording = false {
         didSet { updateAppearance() }
     }
@@ -36,15 +37,37 @@ final class ShortcutRecorderView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func setDisplayString(_ s: String) {
-        label.stringValue = s.isEmpty ? "Click to record shortcut" : s
+        currentDisplay = s
+        showCurrentShortcut()
+    }
+
+    private func showCurrentShortcut() {
+        label.stringValue = currentDisplay.isEmpty ? "Click to record shortcut" : currentDisplay
+        label.textColor = currentDisplay.isEmpty ? .secondaryLabelColor : .labelColor
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// Clicking elsewhere cancels recording instead of leaving the field
+    /// stuck on "Type shortcut…".
+    override func resignFirstResponder() -> Bool {
+        if isRecording {
+            isRecording = false
+            showCurrentShortcut()
+        }
+        return super.resignFirstResponder()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
 
     override func mouseDown(with event: NSEvent) {
         isRecording = true
         window?.makeFirstResponder(self)
         label.stringValue = "Type shortcut…"
+        label.textColor = .controlAccentColor
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -64,19 +87,33 @@ final class ShortcutRecorderView: NSView {
     private func handle(event: NSEvent) {
         if Int(event.keyCode) == kVK_Escape {
             isRecording = false
+            showCurrentShortcut()
+            return
+        }
+        // A bare key (or shift-only) as a global hotkey would swallow that
+        // key system-wide, so require ⌘, ⌥ or ⌃.
+        guard !event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+            NSSound.beep()
+            label.stringValue = "Include ⌘, ⌥ or ⌃"
             return
         }
         isRecording = false
         let carbonModifiers = Self.carbonModifiers(from: event.modifierFlags)
         let display = Self.displayString(keyCode: event.keyCode, modifierFlags: event.modifierFlags)
-        label.stringValue = display
+        currentDisplay = display
+        showCurrentShortcut()
         onShortcutChanged?(UInt32(event.keyCode), carbonModifiers, display)
     }
 
     private func updateAppearance() {
-        layer?.backgroundColor = (isRecording
-            ? NSColor.controlAccentColor.withAlphaComponent(0.15)
-            : NSColor.controlColor).cgColor
+        // cgColor is resolved once, so re-resolve under the current appearance.
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = (isRecording
+                ? NSColor.controlAccentColor.withAlphaComponent(0.15)
+                : NSColor.controlBackgroundColor).cgColor
+            layer?.borderWidth = 1
+            layer?.borderColor = (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).cgColor
+        }
     }
 
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
@@ -114,7 +151,10 @@ final class ShortcutRecorderView: NSView {
             34: "I", 35: "P", 37: "L", 38: "J", 40: "K", 45: "N", 46: "M",
             18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9", 29: "0",
             36: "Return", 48: "Tab", 49: "Space", 51: "Delete", 53: "Escape",
-            123: "←", 124: "→", 125: "↓", 126: "↑"
+            123: "←", 124: "→", 125: "↓", 126: "↑",
+            24: "=", 27: "-", 30: "]", 33: "[", 39: "'", 41: ";", 42: "\\", 43: ",", 44: "/", 47: ".", 50: "`",
+            122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8",
+            101: "F9", 109: "F10", 103: "F11", 111: "F12", 117: "⌦", 115: "↖", 119: "↘", 116: "⇞", 121: "⇟"
         ]
         return map[keyCode] ?? "Key\(keyCode)"
     }

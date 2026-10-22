@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var onboardingWindowController: OnboardingWindowController?
     private var imapClients: [AccountSlot: IMAPClient] = [:]
     private var unreadCounts: [AccountSlot: Int] = [:]
     private var recentMessages: [AccountSlot: [MailHeader]] = [:]
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installEditMenu()
         notificationManager.requestAuthorization()
 
         statusBarController = StatusBarController(
@@ -49,6 +51,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         startAllConfiguredClients()
         registerSavedShortcutIfNeeded()
+        showOnboardingIfNeeded()
+    }
+
+    /// Accessory apps have no main menu, and Cmd+C/V/X/A/Z are dispatched
+    /// through its Edit menu -- without one, text fields only accept paste
+    /// from the right-click menu. The menu bar never shows it, since the app
+    /// is never frontmost in the Dock sense.
+    private func installEditMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        NSApp.mainMenu = mainMenu
+    }
+
+    /// First run (no email saved at all): walk the user through creating an
+    /// app password and adding their first Gmail account.
+    private func showOnboardingIfNeeded() {
+        guard AccountSlot.allCases.allSatisfy({ Credentials.email(for: $0) == nil }) else { return }
+        onboardingWindowController = OnboardingWindowController(onConnect: { [weak self] email, password, completion in
+            self?.verifyAndAddAccount(email: email, password: password, completion: completion)
+        })
+        onboardingWindowController?.show()
+    }
+
+    /// Tries a real Gmail login with a throwaway client, and only saves the
+    /// account (and starts its permanent client) if it succeeds -- so a typo
+    /// can't leave a bad account behind retrying in the background.
+    private func verifyAndAddAccount(email: String, password: String, completion: @escaping (String?) -> Void) {
+        let client = IMAPClient(email: email, appPassword: password)
+        var finished = false
+
+        func finish(_ error: String?) {
+            guard !finished else { return }
+            finished = true
+            client.stop()
+            if error == nil {
+                Credentials.save(email: email, appPassword: password, slot: .primary)
+                startClient(email: email, password: password, slot: .primary)
+            }
+            completion(error)
+        }
+
+        client.onStatusChanged = { status in
+            DispatchQueue.main.async {
+                if status == "Connected" {
+                    finish(nil)
+                } else if status.hasPrefix("Reconnecting") {
+                    let rejected = status.contains("Server error")
+                    finish(rejected
+                        ? "Google rejected that address or app password. Check both and try again."
+                        : "Couldn't reach Gmail. Check your internet connection and try again.")
+                }
+            }
+        }
+        client.start()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            finish("Gmail didn't respond in time. Check your connection and try again.")
+        }
     }
 
     private func registerSavedShortcutIfNeeded() {
@@ -138,7 +208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startClient(email: email, password: password, slot: slot)
             startedAny = true
         }
-        if !startedAny {
+        // First run (no email saved) is handled by onboarding; an email with a
+        // missing Keychain password needs Preferences.
+        if !startedAny && AccountSlot.allCases.contains(where: { Credentials.email(for: $0) != nil }) {
             showPreferences()
         }
     }

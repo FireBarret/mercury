@@ -242,4 +242,51 @@ enum Settings {
         get { SwipeAction(rawValue: UserDefaults.standard.string(forKey: leftSwipeStep2Key) ?? "") ?? .copyCode }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: leftSwipeStep2Key) }
     }
+
+    // MARK: - Menu-bar count colors
+
+    /// Colors of the unread numbers in the menu bar. Stored as "#RRGGBB".
+    /// Defaults match the original look: blue for the primary account,
+    /// orange for the secondary.
+    static func countColor(for slot: AccountSlot) -> NSColor {
+        color(forKey: countColorKey(for: slot)) ?? (slot == .primary ? .systemBlue : .systemOrange)
+    }
+
+    static func setCountColor(_ color: NSColor?, for slot: AccountSlot) {
+        setColor(color, forKey: countColorKey(for: slot))
+    }
+
+    /// Color of the number when only one account is configured. nil keeps
+    /// the plain menu-bar text color.
+    static var singleAccountCountColor: NSColor? {
+        get { color(forKey: "Mercury.singleCountColor") }
+        set { setColor(newValue, forKey: "Mercury.singleCountColor") }
+    }
+
+    private static func countColorKey(for slot: AccountSlot) -> String {
+        slot == .primary ? "Mercury.account1CountColor" : "Mercury.account2CountColor"
+    }
+
+    private static func color(forKey key: String) -> NSColor? {
+        guard let hex = UserDefaults.standard.string(forKey: key), hex.hasPrefix("#"), hex.count == 7,
+              let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return NSColor(
+            srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
+            green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+
+    private static func setColor(_ color: NSColor?, forKey key: String) {
+        guard let rgb = color?.usingColorSpace(.sRGB) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        let hex = String(format: "#%02X%02X%02X",
+                         Int((rgb.redComponent * 255).rounded()),
+                         Int((rgb.greenComponent * 255).rounded()),
+                         Int((rgb.blueComponent * 255).rounded()))
+        UserDefaults.standard.set(hex, forKey: key)
+    }
 }

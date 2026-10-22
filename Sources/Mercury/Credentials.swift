@@ -17,6 +17,8 @@ enum Credentials {
     private static let account2NameKey = "Mercury.account2Name"
     private static let account1NotifyKey = "Mercury.account1NotificationsEnabled"
     private static let account2NotifyKey = "Mercury.account2NotificationsEnabled"
+    private static let account1HideKey = "Mercury.account1HideWhenNoUnread"
+    private static let account2HideKey = "Mercury.account2HideWhenNoUnread"
     /// Pre-multi-account key; migrated into account1EmailKey on first read.
     private static let legacyEmailKey = "Mercury.email"
 
@@ -30,6 +32,20 @@ enum Credentials {
 
     private static func notifyKey(for slot: AccountSlot) -> String {
         slot == .primary ? account1NotifyKey : account2NotifyKey
+    }
+
+    private static func hideKey(for slot: AccountSlot) -> String {
+        slot == .primary ? account1HideKey : account2HideKey
+    }
+
+    /// When on, this account's recent messages are left out of the menu/panel
+    /// while it has no unread mail, so only unread mail is ever shown.
+    static func hideWhenNoUnread(for slot: AccountSlot) -> Bool {
+        UserDefaults.standard.bool(forKey: hideKey(for: slot))
+    }
+
+    static func setHideWhenNoUnread(_ hide: Bool, for slot: AccountSlot) {
+        UserDefaults.standard.set(hide, forKey: hideKey(for: slot))
     }
 
     /// Whether new mail for this account should trigger a banner
@@ -98,6 +114,7 @@ enum Credentials {
         UserDefaults.standard.removeObject(forKey: emailKey(for: slot))
         UserDefaults.standard.removeObject(forKey: nameKey(for: slot))
         UserDefaults.standard.removeObject(forKey: notifyKey(for: slot))
+        UserDefaults.standard.removeObject(forKey: hideKey(for: slot))
     }
 
     static func appPassword(for email: String) -> String? {
