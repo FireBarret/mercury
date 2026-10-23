@@ -23,18 +23,18 @@ Dock アイコンなし、テレメトリなしです。
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
-    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury のメニューバー設定とライブプレビュー" width="360">
-  </picture>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
-    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury のアカウント設定" width="300">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dropdown-dark.png">
+    <img src="docs/screenshots/dropdown-light.png" alt="Mercury のドロップダウンメニュー（2つのアカウントの最近のメッセージ）" width="300">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/onboarding-1-welcome-dark.png">
-    <img src="docs/screenshots/onboarding-1-welcome-light.png" alt="Mercury の初回起動ウィンドウ" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
+    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury のメニューバー設定とライブプレビュー" width="340">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
+    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury のアカウント設定" width="280">
   </picture>
 </p>
 

@@ -23,18 +23,18 @@ polling, no need to keep Mail.app open, no Dock icon, no telemetry.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
-    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury's Menu Bar preferences with a live badge preview" width="360">
-  </picture>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
-    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury's Accounts preferences" width="300">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dropdown-dark.png">
+    <img src="docs/screenshots/dropdown-light.png" alt="Mercury's dropdown menu with recent messages from two accounts" width="300">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/onboarding-1-welcome-dark.png">
-    <img src="docs/screenshots/onboarding-1-welcome-light.png" alt="Mercury's first-run welcome window" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
+    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury's Menu Bar preferences with a live badge preview" width="340">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
+    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury's Accounts preferences" width="280">
   </picture>
 </p>
 
