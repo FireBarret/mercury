@@ -19,6 +19,25 @@ polling, no need to keep Mail.app open, no Dock icon, no telemetry.
 - Optional swipeable panel (beta): swipe messages with two fingers like Mail.app, with an optional Liquid Glass look
 - Open messages in Mail.app or Gmail, global shortcut, pause notifications, launch at login
 
+## Screenshots
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
+    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury's Menu Bar preferences with a live badge preview" width="360">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
+    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury's Accounts preferences" width="300">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/onboarding-1-welcome-dark.png">
+    <img src="docs/screenshots/onboarding-1-welcome-light.png" alt="Mercury's first-run welcome window" width="420">
+  </picture>
+</p>
+
 ## Install
 
 **Download:** get the latest `Mercury.dmg` from [Releases](../../releases), open it,

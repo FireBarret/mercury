@@ -19,6 +19,25 @@ Dock アイコンなし、テレメトリなしです。
 - スワイプ操作パネル（ベータ）：Mail.app のように 2 本指でメールをスワイプ。Liquid Glass 風の見た目もオプションで選択可
 - Mail.app または Gmail で開く、グローバルショートカット、通知の一時停止、ログイン時に起動
 
+## スクリーンショット
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-menu-bar-dark.png">
+    <img src="docs/screenshots/preferences-menu-bar-light.png" alt="Mercury のメニューバー設定とライブプレビュー" width="360">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preferences-accounts-dark.png">
+    <img src="docs/screenshots/preferences-accounts-light.png" alt="Mercury のアカウント設定" width="300">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/onboarding-1-welcome-dark.png">
+    <img src="docs/screenshots/onboarding-1-welcome-light.png" alt="Mercury の初回起動ウィンドウ" width="420">
+  </picture>
+</p>
+
 ## インストール
 
 **ダウンロード：** [Releases](../../releases) から最新の `Mercury.dmg` を入手して開き、`Mercury` を
