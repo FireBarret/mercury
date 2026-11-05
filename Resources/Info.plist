@@ -13,9 +13,15 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.3</string>
+    <string>1.2.0</string>
     <key>CFBundleVersion</key>
-    <string>6</string>
+    <string>7</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/FireBarret/mercury/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>TFbVw9gj6T98RICCbq3PUaYyRd+9DLmMjypIn5Bs86g=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
     <key>LSUIElement</key>
     <true/>
     <key>LSMinimumSystemVersion</key>

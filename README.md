@@ -17,6 +17,7 @@ polling, no need to keep Mail.app open, no Dock icon, no telemetry.
 - Recent messages list: unread first, or chronological
 - Quick actions per message: flag, mark read/unread, copy a verification code, pick a link from the email
 - Optional swipeable panel (beta): swipe messages with two fingers like Mail.app, with an optional Liquid Glass look
+- Reply in Gmail from the message list, and automatic updates (Sparkle, signed)
 - Open messages in Mail.app or Gmail, global shortcut, pause notifications, launch at login
 
 ## Screenshots
@@ -79,7 +80,7 @@ macOS also silences banners while you share your screen.
 ## Privacy
 
 - App passwords are stored in your macOS Keychain.
-- Mercury only talks to `imap.gmail.com` over TLS, plus Mail.app and your local settings.
+- Mercury only talks to `imap.gmail.com` over TLS, GitHub when it checks for updates (switch it off in Preferences → About), plus Mail.app and your local settings.
   No analytics, no third-party servers.
 - Open source, small, dependency-free. Not sandboxed and not notarized.
 

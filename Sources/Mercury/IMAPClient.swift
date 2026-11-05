@@ -9,6 +9,8 @@ struct MailHeader {
     let isUnread: Bool
     let isFlagged: Bool
     let accountEmail: String
+    /// Bare sender address (for Reply).
+    var fromAddress: String = ""
 }
 
 enum IMAPError: Error, CustomStringConvertible {
@@ -457,8 +459,16 @@ final class IMAPClient {
             messageID: messageID,
             isUnread: isUnread,
             isFlagged: isFlagged,
-            accountEmail: email
+            accountEmail: email,
+            fromAddress: bareAddress(from)
         )
+    }
+
+    private func bareAddress(_ raw: String) -> String {
+        if let lt = raw.lastIndex(of: "<"), let gt = raw.lastIndex(of: ">"), lt < gt {
+            return String(raw[raw.index(after: lt)..<gt]).trimmingCharacters(in: .whitespaces)
+        }
+        return raw.trimmingCharacters(in: .whitespaces)
     }
 
     private func prettifyFrom(_ raw: String) -> String {

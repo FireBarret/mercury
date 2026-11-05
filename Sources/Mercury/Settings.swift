@@ -9,6 +9,7 @@ enum SwipeAction: String, CaseIterable {
     case markRead
     case copyCode
     case checkLinks
+    case reply
 
     var displayName: String {
         switch self {
@@ -17,6 +18,7 @@ enum SwipeAction: String, CaseIterable {
         case .markRead: return "Mark as Read/Unread"
         case .copyCode: return "Copy Code"
         case .checkLinks: return "Check for Links"
+        case .reply: return "Reply in Gmail"
         }
     }
 
@@ -27,6 +29,7 @@ enum SwipeAction: String, CaseIterable {
         case .markRead: return "envelope.open.fill"
         case .copyCode: return "key.fill"
         case .checkLinks: return "link"
+        case .reply: return "arrowshape.turn.up.left.fill"
         }
     }
 
@@ -36,6 +39,7 @@ enum SwipeAction: String, CaseIterable {
         case .markRead: return .systemBlue
         case .copyCode: return .systemPurple
         case .checkLinks: return .systemTeal
+        case .reply: return .systemGreen
         case .none: return .clear
         }
     }

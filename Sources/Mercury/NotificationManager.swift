@@ -65,15 +65,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func sendTestNotification() {
-        notifyNewMail(
-            from: "Mercury",
-            subject: "This is a test notification 🎉",
-            messageID: nil,
-            accountLabel: Credentials.displayName(for: .primary)
-        )
-    }
-
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,

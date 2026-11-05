@@ -18,8 +18,10 @@ private final class MenuOpenTracker: NSObject, NSMenuDelegate {
     private(set) var lastCloseDate = Date.distantPast
     private var monitor: Any?
     var onOpenChanged: ((Bool) -> Void)?
+    var onWillOpen: (() -> Void)?
 
     func menuWillOpen(_ menu: NSMenu) {
+        onWillOpen?()
         isOpen = true
         onOpenChanged?(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak menu] event in
@@ -46,8 +48,88 @@ private final class MenuOpenTracker: NSObject, NSMenuDelegate {
     }
 }
 
+/// A menu row that runs its action without dismissing the menu. NSMenu
+/// closes on any normal item click, but a custom-view item receives the
+/// mouse itself, so the menu stays open (as with Check Now / Mark All as
+/// Read, which you may want to press and then keep looking at the list).
+private final class StayOpenMenuRow: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let title: String
+    private let feedback: String
+    private let followUp: String?
+    private var followUpTimer: Timer?
+    private let action: () -> Void
+    private var isHovered = false { didSet { needsDisplay = true; updateColors() } }
+
+    init(title: String, feedback: String, followUp: String? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.feedback = feedback
+        self.followUp = followUp
+        self.action = action
+        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        autoresizingMask = [.width]
+        label.stringValue = title
+        label.font = NSFont.menuFont(ofSize: 0)
+        label.frame = NSRect(x: 14, y: 2, width: 180, height: 18)
+        label.autoresizingMask = [.width]
+        addSubview(label)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(title)
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func updateColors() {
+        label.textColor = isHovered ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isHovered else { return }
+        NSColor.selectedContentBackgroundColor.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 5, yRadius: 5).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        action()
+        showFeedback()
+    }
+
+    /// Swaps the label for a confirmation that stays until the menu is
+    /// next opened (see `reset()`).
+    private func showFeedback() {
+        label.stringValue = feedback
+        followUpTimer?.invalidate()
+        guard let followUp = followUp else { return }
+        // Common-modes Timer: GCD timers don't fire while a menu is tracked.
+        let timer = Timer(timeInterval: 1.5, repeats: false) { [weak self] _ in
+            self?.label.stringValue = followUp
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        followUpTimer = timer
+    }
+
+    func reset() {
+        followUpTimer?.invalidate()
+        label.stringValue = title
+    }
+}
+
 final class StatusBarController {
     private let menuTracker = MenuOpenTracker()
+    private var stayOpenRows: [StayOpenMenuRow] = []
 
     /// Called with true when the dropdown opens and false when it closes.
     /// The owner unregisters the global hotkey while it's open: Carbon holds
@@ -85,7 +167,6 @@ final class StatusBarController {
     private let onOpenGmail: () -> Void
     private let onOpenMessageInGmail: (MailHeader) -> Void
     private let onOpenMessageInMailApp: (MailHeader) -> Void
-    private let onTestNotification: () -> Void
     private let onMarkAllAsRead: () -> Void
     private let onTogglePauseNotifications: () -> Void
     private let onFlagMessage: (MailHeader, Bool) -> Void
@@ -99,7 +180,6 @@ final class StatusBarController {
          onOpenGmail: @escaping () -> Void,
          onOpenMessageInGmail: @escaping (MailHeader) -> Void,
          onOpenMessageInMailApp: @escaping (MailHeader) -> Void,
-         onTestNotification: @escaping () -> Void,
          onMarkAllAsRead: @escaping () -> Void,
          onTogglePauseNotifications: @escaping () -> Void,
          onFlagMessage: @escaping (MailHeader, Bool) -> Void,
@@ -112,7 +192,6 @@ final class StatusBarController {
         self.onOpenGmail = onOpenGmail
         self.onOpenMessageInGmail = onOpenMessageInGmail
         self.onOpenMessageInMailApp = onOpenMessageInMailApp
-        self.onTestNotification = onTestNotification
         self.onMarkAllAsRead = onMarkAllAsRead
         self.onTogglePauseNotifications = onTogglePauseNotifications
         self.onFlagMessage = onFlagMessage
@@ -126,6 +205,7 @@ final class StatusBarController {
         statusItem.button?.imagePosition = .imageLeft
 
         menu.delegate = menuTracker
+        menuTracker.onWillOpen = { [weak self] in self?.stayOpenRows.forEach { $0.reset() } }
         statusLabelItem.isEnabled = false
         recentHeaderItem.isEnabled = false
         recentHeaderItem.isHidden = true
@@ -141,13 +221,12 @@ final class StatusBarController {
         menu.addItem(recentHeaderItem2)
         // Section-2 (second account) recent-message items get inserted here, right after recentHeaderItem2.
         menu.addItem(.separator())
-        menu.addItem(makeItem(title: "Check Now", action: #selector(checkNowTapped)))
+        menu.addItem(makeStayOpenItem(title: "Check Now", feedback: "Checking…", followUp: "Check completed ✓") { [weak self] in self?.onCheckNow() })
         menu.addItem(makeItem(title: "Open Gmail", action: #selector(openGmailTapped)))
         pauseNotificationsItem.target = self
         pauseNotificationsItem.action = #selector(togglePauseNotificationsTapped)
         menu.addItem(pauseNotificationsItem)
-        menu.addItem(makeItem(title: "Send Test Notification", action: #selector(testNotificationTapped)))
-        menu.addItem(makeItem(title: "Mark All as Read", action: #selector(markAllAsReadTapped)))
+        menu.addItem(makeStayOpenItem(title: "Mark All as Read", feedback: "Marked all as read ✓") { [weak self] in self?.onMarkAllAsRead() })
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Preferences…", action: #selector(preferencesTapped), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -211,19 +290,29 @@ final class StatusBarController {
         return frame
     }
 
+    private func makeStayOpenItem(title: String, feedback: String, followUp: String? = nil, action: @escaping () -> Void) -> NSMenuItem {
+        let item = NSMenuItem()
+        let row = StayOpenMenuRow(title: title, feedback: feedback, followUp: followUp, action: action)
+        stayOpenRows.append(row)
+        item.view = row
+        return item
+    }
+
     private func makeItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
         return item
     }
 
-    @objc private func checkNowTapped() { onCheckNow() }
     @objc private func openGmailTapped() { onOpenGmail() }
-    @objc private func testNotificationTapped() { onTestNotification() }
-    @objc private func markAllAsReadTapped() { onMarkAllAsRead() }
     @objc private func togglePauseNotificationsTapped() { onTogglePauseNotifications() }
     @objc private func preferencesTapped() { onPreferences() }
     @objc private func quitTapped() { onQuit() }
+
+    @objc private func replyTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        MessageOpener.replyInGmail(to: message)
+    }
 
     @objc private func openInGmailTapped(_ sender: NSMenuItem) {
         guard let message = sender.representedObject as? MailHeader else { return }
@@ -414,6 +503,12 @@ final class StatusBarController {
         openGmailItem.representedObject = message
         openGmailItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         submenu.addItem(openGmailItem)
+
+        let replyItem = NSMenuItem(title: "Reply in Gmail", action: #selector(replyTapped(_:)), keyEquivalent: "")
+        replyItem.target = self
+        replyItem.representedObject = message
+        replyItem.image = NSImage(systemSymbolName: "arrowshape.turn.up.left", accessibilityDescription: nil)
+        submenu.addItem(replyItem)
 
         submenu.addItem(.separator())
 

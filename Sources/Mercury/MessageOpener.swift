@@ -36,6 +36,21 @@ enum MessageOpener {
         NSWorkspace.shared.open(url)
     }
 
+    /// Opens a Gmail compose window addressed to the sender with a "Re:"
+    /// subject. It isn't tied to the original thread.
+    static func replyInGmail(to message: MailHeader) {
+        var subject = message.subject
+        if subject.lowercased().hasPrefix("re:") == false { subject = "Re: " + subject }
+        var components = URLComponents(string: "https://mail.google.com/mail/u/\(message.accountEmail)/")
+        components?.queryItems = [
+            URLQueryItem(name: "view", value: "cm"),
+            URLQueryItem(name: "fs", value: "1"),
+            URLQueryItem(name: "to", value: message.fromAddress),
+            URLQueryItem(name: "su", value: subject)
+        ]
+        if let url = components?.url { NSWorkspace.shared.open(url) } else { openGmailInbox() }
+    }
+
     private static func openGmailInbox() {
         if let url = URL(string: "https://mail.google.com") {
             NSWorkspace.shared.open(url)

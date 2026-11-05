@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
+        Updater.start()
         notificationManager.requestAuthorization()
 
         statusBarController = StatusBarController(
@@ -29,7 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenMessageInMailApp: { message in
                 MessageOpener.openInMailApp(messageID: message.messageID)
             },
-            onTestNotification: { [weak self] in self?.notificationManager.sendTestNotification() },
             onMarkAllAsRead: { [weak self] in
                 self?.statusBarController?.markAllAsReadOptimistically()
                 self?.imapClients.values.forEach { $0.markAllAsRead() }

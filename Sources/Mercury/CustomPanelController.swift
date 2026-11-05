@@ -102,6 +102,9 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     private let statusLabel = NSTextField(labelWithString: "Checking…")
     private let messagesStack = NSStackView()
     private let pauseButton: NSButton
+    private var checkNowButton: NSButton?
+    private var feedbackGeneration = 0
+    private var markAllButton: NSButton?
 
     private let panelWidth: CGFloat = 340
     private var clickAwayMonitor: Any?
@@ -192,12 +195,16 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
 
         outerStack.addArrangedSubview(divider())
 
-        outerStack.addArrangedSubview(padded(actionRow(title: "Check Now", symbol: "arrow.clockwise", action: #selector(checkNowTapped))))
+        let checkNow = actionRow(title: "Check Now", symbol: "arrow.clockwise", action: #selector(checkNowTapped))
+        checkNowButton = checkNow
+        outerStack.addArrangedSubview(padded(checkNow))
         outerStack.addArrangedSubview(padded(actionRow(title: "Open Gmail", symbol: "globe", action: #selector(openGmailTapped))))
         pauseButton.removeFromSuperview()
         configureActionButton(pauseButton, title: "Pause Notifications (1h)", symbol: "moon.zzz", action: #selector(pauseTapped))
         outerStack.addArrangedSubview(padded(pauseButton))
-        outerStack.addArrangedSubview(padded(actionRow(title: "Mark All as Read", symbol: "envelope.open", action: #selector(markAllTapped))))
+        let markAll = actionRow(title: "Mark All as Read", symbol: "envelope.open", action: #selector(markAllTapped))
+        markAllButton = markAll
+        outerStack.addArrangedSubview(padded(markAll))
 
         outerStack.addArrangedSubview(divider())
 
@@ -302,9 +309,37 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    @objc private func checkNowTapped() { onCheckNow() }
+    /// Swaps a button's title and icon for a confirmation that stays until
+    /// the panel is next shown.
+    private func flash(_ button: NSButton?, title: String, symbol: String) {
+        guard let button = button else { return }
+        button.title = title
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    }
+
+    private func resetFeedback() {
+        feedbackGeneration += 1
+        checkNowButton?.title = "Check Now"
+        checkNowButton?.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        markAllButton?.title = "Mark All as Read"
+        markAllButton?.image = NSImage(systemSymbolName: "envelope.open", accessibilityDescription: nil)
+    }
+
+    @objc private func checkNowTapped() {
+        onCheckNow()
+        flash(checkNowButton, title: "Checking…", symbol: "arrow.triangle.2.circlepath")
+        feedbackGeneration += 1
+        let generation = feedbackGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self, self.feedbackGeneration == generation else { return }
+            self.flash(self.checkNowButton, title: "Check completed", symbol: "checkmark.circle.fill")
+        }
+    }
     @objc private func openGmailTapped() { onOpenGmail() }
-    @objc private func markAllTapped() { onMarkAllAsRead() }
+    @objc private func markAllTapped() {
+        onMarkAllAsRead()
+        flash(markAllButton, title: "Marked all as read", symbol: "checkmark.circle.fill")
+    }
     @objc private func preferencesTapped() { onPreferences(); hide() }
     @objc private func quitTapped() { onQuit() }
     @objc private func pauseTapped() { onTogglePauseNotifications() }
@@ -376,6 +411,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         case .markRead: onMarkReadMessage(message, message.isUnread)
         case .copyCode: onCopyCode(message)
         case .checkLinks: onCheckLinks(message)
+        case .reply: MessageOpener.replyInGmail(to: message)
         }
     }
 
@@ -416,6 +452,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     }
 
     private func show(anchorFrame: NSRect?) {
+        resetFeedback()
         outerStack.layoutSubtreeIfNeeded()
         let screen = anchorFrame.flatMap { frame in
             NSScreen.screens.first { $0.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) }

@@ -135,6 +135,102 @@ private final class FormPageViewController: NSViewController {
     }
 }
 
+/// "About" tab: credits and links.
+private final class AboutPageViewController: NSViewController {
+    private static let githubURL = "https://github.com/FireBarret"
+    private static let websiteURL = "https://dariushshaban.com"
+    private static let coffeeURL = "https://buymeacoffee.com/shabandariush"
+
+    private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "Check for updates automatically", target: nil, action: nil)
+
+    @objc private func checkUpdatesTapped() { Updater.checkForUpdates() }
+    @objc private func autoUpdateToggled() { Updater.automaticallyChecks = (autoUpdateCheckbox.state == .on) }
+
+    override func loadView() {
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 72).isActive = true
+
+        let name = NSTextField(labelWithString: "Mercury")
+        name.font = NSFont.boldSystemFont(ofSize: 20)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let versionLabel = NSTextField(labelWithString: version.isEmpty ? "" : "Version \(version)")
+        versionLabel.font = NSFont.systemFont(ofSize: 11)
+        versionLabel.textColor = .secondaryLabelColor
+        let author = NSTextField(labelWithString: "Developed by Dariush Shaban")
+        author.font = NSFont.systemFont(ofSize: 13)
+
+        let github = Self.linkRow(prefix: "Please check out my ", link: "GitHub", url: Self.githubURL, target: self)
+        let website = Self.linkRow(prefix: "Or check out my website at ", link: "dariushshaban.com", url: Self.websiteURL, target: self)
+
+        let coffee = NSButton(title: "", target: self, action: #selector(linkTapped(_:)))
+        coffee.identifier = NSUserInterfaceItemIdentifier(Self.coffeeURL)
+        coffee.isBordered = false
+        coffee.wantsLayer = true
+        coffee.layer?.backgroundColor = NSColor(srgbRed: 1.0, green: 0.867, blue: 0.0, alpha: 1).cgColor
+        coffee.layer?.cornerRadius = 8
+        coffee.attributedTitle = NSAttributedString(string: "☕️  Buy me a coffee", attributes: [
+            .foregroundColor: NSColor.black,
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold)
+        ])
+        coffee.translatesAutoresizingMaskIntoConstraints = false
+        coffee.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        coffee.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let updateButton = NSButton(title: "Check for Updates…", target: self, action: #selector(checkUpdatesTapped))
+        updateButton.bezelStyle = .rounded
+        autoUpdateCheckbox.target = self
+        autoUpdateCheckbox.action = #selector(autoUpdateToggled)
+        autoUpdateCheckbox.state = Updater.automaticallyChecks ? .on : .off
+
+        let stack = NSStackView(views: [icon, name, versionLabel, updateButton, autoUpdateCheckbox, author, github, website, coffee])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 6
+        stack.setCustomSpacing(10, after: icon)
+        stack.setCustomSpacing(12, after: versionLabel)
+        stack.setCustomSpacing(22, after: autoUpdateCheckbox)
+        stack.setCustomSpacing(14, after: author)
+        stack.setCustomSpacing(20, after: website)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView()
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: Layout.inset),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Layout.inset),
+            stack.centerXAnchor.constraint(equalTo: root.centerXAnchor)
+        ])
+        view = root
+        preferredContentSize = NSSize(width: Layout.contentWidth, height: stack.fittingSize.height + Layout.inset * 2)
+    }
+
+    private static func linkRow(prefix: String, link: String, url: String, target: AnyObject) -> NSView {
+        let label = NSTextField(labelWithString: prefix)
+        label.font = NSFont.systemFont(ofSize: 13)
+        let button = NSButton(title: link, target: target, action: #selector(linkTapped(_:)))
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.attributedTitle = NSAttributedString(string: link, attributes: [
+            .foregroundColor: NSColor.linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .font: NSFont.systemFont(ofSize: 13)
+        ])
+        button.identifier = NSUserInterfaceItemIdentifier(url)
+        let row = NSStackView(views: [label, button])
+        row.orientation = .horizontal
+        row.spacing = 0
+        row.alignment = .firstBaseline
+        return row
+    }
+
+    @objc private func linkTapped(_ sender: NSButton) {
+        guard let urlString = sender.identifier?.rawValue, let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
 /// A fake menu-bar strip showing the envelope + unread numbers exactly as
 /// the status item renders them.
 private final class MenuBarPreviewView: NSView {
@@ -278,7 +374,17 @@ final class PreferencesWindowController: NSWindowController {
         addTab(title: "Menu Bar", symbol: "menubar.rectangle", form: buildMenuBarForm())
         addTab(title: "Accounts", symbol: "person.crop.circle", form: buildAccountsForm())
         addTab(title: "Swipe Panel", symbol: "hand.draw", form: buildSwipeForm())
+        addAboutTab()
         window.center()
+    }
+
+    private func addAboutTab() {
+        let page = AboutPageViewController()
+        page.title = "About"
+        let item = NSTabViewItem(viewController: page)
+        item.label = "About"
+        item.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About")
+        tabController.addTabViewItem(item)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -14,6 +14,8 @@ rm -rf "build"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 cp "${BUILD_DIR}/${APP_NAME}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+mkdir -p "${APP_DIR}/Contents/Frameworks"
+ditto "${BUILD_DIR}/Sparkle.framework" "${APP_DIR}/Contents/Frameworks/Sparkle.framework"
 cp "Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
 cp "Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
