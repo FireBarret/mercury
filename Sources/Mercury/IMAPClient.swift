@@ -279,7 +279,7 @@ final class IMAPClient {
     private func tryExtractLineLocked() -> String? {
         guard let crlfRange = buffer.range(of: Data([0x0D, 0x0A])) else { return nil }
         let lineData = buffer.subdata(in: buffer.startIndex..<crlfRange.lowerBound)
-        let lineString = String(data: lineData, encoding: .utf8) ?? ""
+        let lineString = String(decoding: lineData, as: UTF8.self)
 
         if let literalLength = literalLength(in: lineString) {
             let literalStart = crlfRange.upperBound
@@ -288,13 +288,13 @@ final class IMAPClient {
             }
             let literalEnd = buffer.index(literalStart, offsetBy: literalLength)
             let literalData = buffer.subdata(in: literalStart..<literalEnd)
-            let literalString = String(data: literalData, encoding: .utf8) ?? ""
+            let literalString = String(decoding: literalData, as: UTF8.self)
 
             guard let restCrlfRange = buffer.range(of: Data([0x0D, 0x0A]), in: literalEnd..<buffer.endIndex) else {
                 return nil // need the trailing CRLF after the literal
             }
             let restData = buffer.subdata(in: literalEnd..<restCrlfRange.lowerBound)
-            let restString = String(data: restData, encoding: .utf8) ?? ""
+            let restString = String(decoding: restData, as: UTF8.self)
 
             buffer.removeSubrange(buffer.startIndex..<restCrlfRange.upperBound)
             return lineString + "\n" + literalString + restString
@@ -616,6 +616,7 @@ final class IMAPClient {
                 result = try fetchRawBody(uid: uid)
             } catch {
                 NSLog("IMAPClient: fetchMessageBody(uid: \(uid)) failed: \(error)")
+                DebugLog.write("fetchMessageBody(uid: \(uid)) failed: \(error)")
             }
             DispatchQueue.main.async { completion(result) }
         }

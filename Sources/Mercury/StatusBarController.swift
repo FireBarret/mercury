@@ -19,6 +19,7 @@ private final class MenuOpenTracker: NSObject, NSMenuDelegate {
     private var monitor: Any?
     var onOpenChanged: ((Bool) -> Void)?
     var onWillOpen: (() -> Void)?
+    var onDidClose: (() -> Void)?
 
     func menuWillOpen(_ menu: NSMenu) {
         onWillOpen?()
@@ -36,8 +37,16 @@ private final class MenuOpenTracker: NSObject, NSMenuDelegate {
         isOpen = false
         lastCloseDate = Date()
         onOpenChanged?(false)
+        onDidClose?()
         if let monitor = monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+    }
+
+    static func downArrowEvent() -> NSEvent? {
+        let down = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function],
+                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
+                                characters: down, charactersIgnoringModifiers: down, isARepeat: false, keyCode: 125)
     }
 
     private func matchesShortcut(_ event: NSEvent) -> Bool {
@@ -50,70 +59,128 @@ private final class MenuOpenTracker: NSObject, NSMenuDelegate {
 
 /// A menu row that runs its action without dismissing the menu. NSMenu
 /// closes on any normal item click, but a custom-view item receives the
-/// mouse itself, so the menu stays open (as with Check Now / Mark All as
-/// Read, which you may want to press and then keep looking at the list).
+/// mouse itself, so the menu stays open. Highlighting follows the menu's own
+/// state (`enclosingMenuItem.isHighlighted`) so it never gets stuck.
 private final class StayOpenMenuRow: NSView {
+    private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
-    private let title: String
-    private let feedback: String
+    private var baseTitle: String
     private let followUp: String?
     private var followUpTimer: Timer?
-    private let action: () -> Void
-    private var isHovered = false { didSet { needsDisplay = true; updateColors() } }
+    private var feedbackShown = false
+    private let hintLabel = NSTextField(labelWithString: "")
+    private let feedback: (StayOpenMenuRow) -> String
+    private let action: (StayOpenMenuRow) -> Void
+    /// The message a per-message row acts on.
+    var message: MailHeader?
 
-    init(title: String, feedback: String, followUp: String? = nil, action: @escaping () -> Void) {
-        self.title = title
-        self.feedback = feedback
+    init(title: String, icon: NSImage? = nil, followUp: String? = nil,
+         feedback: @escaping (StayOpenMenuRow) -> String, action: @escaping (StayOpenMenuRow) -> Void) {
+        self.baseTitle = title
         self.followUp = followUp
+        self.feedback = feedback
         self.action = action
         super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
         autoresizingMask = [.width]
         label.stringValue = title
         label.font = NSFont.menuFont(ofSize: 0)
-        label.frame = NSRect(x: 14, y: 2, width: 180, height: 18)
         label.autoresizingMask = [.width]
+        iconView.frame = NSRect(x: 12, y: 3, width: 16, height: 16)
+        addSubview(iconView)
         addSubview(label)
+        hintLabel.font = NSFont.menuFont(ofSize: 0)
+        hintLabel.alignment = .right
+        hintLabel.autoresizingMask = [.minXMargin]
+        hintLabel.frame = NSRect(x: 150, y: 2, width: 36, height: 18)
+        addSubview(hintLabel)
+        update(title: title, icon: icon)
         setAccessibilityRole(.button)
         setAccessibilityLabel(title)
-        updateColors()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func updateColors() {
-        label.textColor = isHovered ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+    func update(title: String, icon: NSImage?) {
+        baseTitle = title
+        iconView.image = icon
+        iconView.isHidden = icon == nil
+        label.frame = NSRect(x: icon == nil ? 14 : 34, y: 2, width: 160, height: 18)
+        if !feedbackShown { label.stringValue = title }
+    }
+
+    // The menu doesn't redraw custom views on highlight changes, and mouse
+    // enter/exit events get lost while submenus open. So hover is derived
+    // from the live pointer position and polled while the row is on screen.
+    /// The key shown greyed on the right ("" hides it).
+    func setHint(_ key: String) {
+        hintLabel.stringValue = key.uppercased()
+    }
+
+    override func layout() {
+        super.layout()
+        hintLabel.frame = NSRect(x: bounds.width - 14 - 36, y: 2, width: 36, height: 18)
+        label.frame.size.width = max(60, bounds.width - label.frame.minX - 50)
+    }
+
+    private var isHighlighted = false
+    private var hoverTimer: Timer?
+
+    private func pointerIsInside() -> Bool {
+        guard let window = window else { return false }
+        let local = convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        return bounds.contains(local)
+    }
+
+    private func refreshHover() {
+        let inside = pointerIsInside() || (enclosingMenuItem?.isHighlighted ?? false)
+        if inside != isHighlighted {
+            isHighlighted = inside
+            needsDisplay = true
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        isHighlighted = false
+        guard window != nil else { return }
+        let timer = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in self?.refreshHover() }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+        refreshHover()
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard isHovered else { return }
+        let highlighted = isHighlighted
+        label.textColor = highlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+        hintLabel.textColor = highlighted ? NSColor.selectedMenuItemTextColor.withAlphaComponent(0.8) : NSColor.tertiaryLabelColor
+        guard highlighted else { return }
         NSColor.selectedContentBackgroundColor.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 5, yRadius: 5).fill()
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds,
-                                       options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                       owner: self, userInfo: nil))
-    }
-
-    override func mouseEntered(with event: NSEvent) { isHovered = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false }
+    override func mouseDown(with event: NSEvent) {}
 
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        action()
+        activate()
+    }
+
+    /// Runs the action and shows its feedback (click or quick key).
+    func activate() {
+        action(self)
         showFeedback()
     }
 
-    /// Swaps the label for a confirmation that stays until the menu is
-    /// next opened (see `reset()`).
+    /// Swaps the label for a confirmation that stays until `reset()` (the
+    /// next time the menu opens). A common-modes Timer is needed for the
+    /// follow-up because GCD timers don't fire while a menu is tracked.
     private func showFeedback() {
-        label.stringValue = feedback
+        feedbackShown = true
+        label.stringValue = feedback(self)
         followUpTimer?.invalidate()
         guard let followUp = followUp else { return }
-        // Common-modes Timer: GCD timers don't fire while a menu is tracked.
         let timer = Timer(timeInterval: 1.5, repeats: false) { [weak self] _ in
             self?.label.stringValue = followUp
         }
@@ -123,13 +190,23 @@ private final class StayOpenMenuRow: NSView {
 
     func reset() {
         followUpTimer?.invalidate()
-        label.stringValue = title
+        feedbackShown = false
+        label.stringValue = baseTitle
     }
 }
 
 final class StatusBarController {
     private let menuTracker = MenuOpenTracker()
     private var stayOpenRows: [StayOpenMenuRow] = []
+    private var needsRerender = false
+    /// Number of Down-arrow presses to send right after the menu opens, to
+    /// land the highlight on a message (1 = the newest).
+    private var downPressesOnOpen = 0
+    private var checkNowItem: NSMenuItem?
+    private var markAllItem: NSMenuItem?
+    private var checkNowRow: StayOpenMenuRow?
+    private var markAllRow: StayOpenMenuRow?
+    private let openInboxItem = NSMenuItem()
 
     /// Called with true when the dropdown opens and false when it closes.
     /// The owner unregisters the global hotkey while it's open: Carbon holds
@@ -205,7 +282,12 @@ final class StatusBarController {
         statusItem.button?.imagePosition = .imageLeft
 
         menu.delegate = menuTracker
-        menuTracker.onWillOpen = { [weak self] in self?.stayOpenRows.forEach { $0.reset() } }
+        menuTracker.onWillOpen = { [weak self] in self?.menuWillOpen() }
+        menuTracker.onDidClose = { [weak self] in
+            guard let self = self, self.needsRerender else { return }
+            self.needsRerender = false
+            self.update(accounts: self.lastAccounts)
+        }
         statusLabelItem.isEnabled = false
         recentHeaderItem.isEnabled = false
         recentHeaderItem.isHidden = true
@@ -221,12 +303,27 @@ final class StatusBarController {
         menu.addItem(recentHeaderItem2)
         // Section-2 (second account) recent-message items get inserted here, right after recentHeaderItem2.
         menu.addItem(.separator())
-        menu.addItem(makeStayOpenItem(title: "Check Now", feedback: "Checking…", followUp: "Check completed ✓") { [weak self] in self?.onCheckNow() })
-        menu.addItem(makeItem(title: "Open Gmail", action: #selector(openGmailTapped)))
+        let checkNowItem = makeStayOpenItem(title: "Check Now", feedback: "Checking…", followUp: "Check completed ✓") { [weak self] in self?.onCheckNow() }
+        checkNowRow = checkNowItem.view as? StayOpenMenuRow
+        // An action makes the row reachable with the arrow keys (Return or
+        // its key then runs it; a mouse click is handled by the row itself).
+        checkNowItem.target = self
+        checkNowItem.action = #selector(checkNowItemFired)
+        self.checkNowItem = checkNowItem
+        menu.addItem(checkNowItem)
+        openInboxItem.title = "Open Gmail"
+        openInboxItem.target = self
+        openInboxItem.action = #selector(openGmailTapped)
+        menu.addItem(openInboxItem)
         pauseNotificationsItem.target = self
         pauseNotificationsItem.action = #selector(togglePauseNotificationsTapped)
         menu.addItem(pauseNotificationsItem)
-        menu.addItem(makeStayOpenItem(title: "Mark All as Read", feedback: "Marked all as read ✓") { [weak self] in self?.onMarkAllAsRead() })
+        let markAllItem = makeStayOpenItem(title: "Mark All as Read", feedback: "Marked all as read ✓") { [weak self] in self?.onMarkAllAsRead() }
+        markAllRow = markAllItem.view as? StayOpenMenuRow
+        markAllItem.target = self
+        markAllItem.action = #selector(markAllItemFired)
+        self.markAllItem = markAllItem
+        menu.addItem(markAllItem)
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Preferences…", action: #selector(preferencesTapped), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -290,9 +387,75 @@ final class StatusBarController {
         return frame
     }
 
+    /// Resets every "Marked…/Checking…" row, including the per-message ones
+    /// inside submenus, when the menu opens again.
+    @objc private func checkNowItemFired() { checkNowRow?.activate() }
+    @objc private func markAllItemFired() { markAllRow?.activate() }
+
+    /// Toggles read/unread (click or the E key).
+    @objc private func markReadTapped(_ sender: NSMenuItem) {
+        guard let message = sender.representedObject as? MailHeader else { return }
+        onMarkReadMessage(message, message.isUnread)
+    }
+
+    private func menuWillOpen() {
+        resetFeedbackRows()
+        applyKeyHints()
+        let presses = downPressesOnOpen
+        downPressesOnOpen = 0
+        guard presses > 0 else { return }
+        // Highlight the wanted message by pressing Down that many times.
+        // Common-modes Timers so they fire during menu tracking.
+        for i in 0..<presses {
+            let timer = Timer(timeInterval: 0.06 + 0.04 * Double(i), repeats: false) { _ in
+                if let event = MenuOpenTracker.downArrowEvent() { NSApp.postEvent(event, atStart: false) }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    /// Greyed key hints on the right of each row.
+    private func applyKeyHints() {
+        checkNowRow?.setHint(Settings.key(for: .checkNow))
+        markAllRow?.setHint(Settings.key(for: .markAllRead))
+        if let item = checkNowItem { setKeyHint(item, Settings.key(for: .checkNow)) }
+        if let item = markAllItem { setKeyHint(item, Settings.key(for: .markAllRead)) }
+        setKeyHint(openInboxItem, Settings.key(for: .openInbox))
+        for item in recentItems + recentItems2 { applySubmenuHints(item.submenu) }
+    }
+
+    private func setKeyHint(_ item: NSMenuItem, _ key: String) {
+        item.keyEquivalentModifierMask = []
+        item.keyEquivalent = key
+    }
+
+    private func applySubmenuHints(_ submenu: NSMenu?) {
+        for sub in submenu?.items ?? [] {
+            let action: QuickKey?
+            switch sub.action {
+            case #selector(openInMailAppTapped(_:)): action = .openMailApp
+            case #selector(openInGmailTapped(_:)): action = .openGmail
+            case #selector(replyTapped(_:)): action = .reply
+            case #selector(markReadTapped(_:)): action = .markRead
+            case #selector(flagTapped(_:)): action = .flag
+            case #selector(copyCodeTapped(_:)): action = .copyCode
+            case #selector(checkLinksTapped(_:)): action = .checkLinks
+            default: action = nil
+            }
+            if let action = action { setKeyHint(sub, Settings.key(for: action)) }
+        }
+    }
+
+    private func resetFeedbackRows() {
+        stayOpenRows.forEach { $0.reset() }
+        for item in recentItems + recentItems2 {
+            for sub in item.submenu?.items ?? [] { (sub.view as? StayOpenMenuRow)?.reset() }
+        }
+    }
+
     private func makeStayOpenItem(title: String, feedback: String, followUp: String? = nil, action: @escaping () -> Void) -> NSMenuItem {
         let item = NSMenuItem()
-        let row = StayOpenMenuRow(title: title, feedback: feedback, followUp: followUp, action: action)
+        let row = StayOpenMenuRow(title: title, followUp: followUp, feedback: { _ in feedback }, action: { _ in action() })
         stayOpenRows.append(row)
         item.view = row
         return item
@@ -351,9 +514,10 @@ final class StatusBarController {
             }
         }
         NSLog("Mercury: global shortcut fired, opening menu")
+        if !Settings.useCustomPanel { downPressesOnOpen = 1 }
         let anchor = visibleButtonFrame()
         if Settings.useCustomPanel {
-            customPanelController?.toggle(anchorFrame: anchor)
+            customPanelController?.toggle(anchorFrame: anchor, selectNewest: true)
         } else if anchor != nil {
             statusItem.button?.performClick(nil)
         } else {
@@ -463,6 +627,27 @@ final class StatusBarController {
         messages: [MailHeader],
         headerTitle: String
     ) {
+        // Removing a row whose submenu is open orphans that submenu and
+        // leaves the menu stuck, so while the menu is open only refresh rows
+        // in place; a changed list waits until the menu closes.
+        if menuTracker.isOpen {
+            func key(_ m: MailHeader) -> String { "\(m.accountEmail)|\(m.uid ?? -1)|\(m.messageID ?? "")" }
+            let existing = items.compactMap { ($0.representedObject as? MailHeader).map(key) }
+            let incoming = messages.map(key)
+            if existing.count == items.count, items.count == messages.count, Set(existing) == Set(incoming) {
+                header.title = headerTitle
+                let byKey = Dictionary(messages.map { (key($0), $0) }, uniquingKeysWith: { first, _ in first })
+                for item in items {
+                    if let old = item.representedObject as? MailHeader, let message = byKey[key(old)] {
+                        refreshInPlace(item, with: message)
+                    }
+                }
+                if existing != incoming { needsRerender = true }   // reorder once the menu closes
+            } else {
+                needsRerender = true
+            }
+            return
+        }
         for item in items {
             menu.removeItem(item)
         }
@@ -486,6 +671,21 @@ final class StatusBarController {
             item.submenu = quickActionsSubmenu(for: message)
             menu.insertItem(item, at: insertionIndex + offset)
             items.append(item)
+        }
+    }
+
+    private func refreshInPlace(_ item: NSMenuItem, with message: MailHeader) {
+        item.attributedTitle = formattedTitle(for: message)
+        item.representedObject = message
+        for sub in item.submenu?.items ?? [] {
+            if sub.action == #selector(markReadTapped(_:)) {
+                sub.representedObject = message
+                sub.title = message.isUnread ? "Mark as Read" : "Mark as Unread"
+                sub.image = tintedSymbol(message.isUnread ? "envelope.open.fill" : "envelope.fill", color: .systemBlue)
+            } else if sub.representedObject != nil {
+                sub.representedObject = message
+                if sub.action == #selector(flagTapped(_:)) { sub.title = message.isFlagged ? "Remove Flag" : "Flag" }
+            }
         }
     }
 
@@ -532,20 +732,24 @@ final class StatusBarController {
         readItem.image = tintedSymbol(message.isUnread ? "envelope.open.fill" : "envelope.fill", color: .systemBlue)
         submenu.addItem(readItem)
 
-        submenu.addItem(.separator())
+        if quickExtractionEnabled {
+            submenu.addItem(.separator())
 
-        let copyCodeItem = NSMenuItem(title: "Copy Code", action: #selector(copyCodeTapped(_:)), keyEquivalent: "")
-        copyCodeItem.target = self
-        copyCodeItem.representedObject = message
-        copyCodeItem.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
-        submenu.addItem(copyCodeItem)
+            let copyCodeItem = NSMenuItem(title: "Copy Code", action: #selector(copyCodeTapped(_:)), keyEquivalent: "")
+            copyCodeItem.target = self
+            copyCodeItem.representedObject = message
+            copyCodeItem.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
+            submenu.addItem(copyCodeItem)
 
-        let checkLinksItem = NSMenuItem(title: "Check for Links", action: #selector(checkLinksTapped(_:)), keyEquivalent: "")
-        checkLinksItem.target = self
-        checkLinksItem.representedObject = message
-        checkLinksItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
-        submenu.addItem(checkLinksItem)
+            let checkLinksItem = NSMenuItem(title: "Check for Links", action: #selector(checkLinksTapped(_:)), keyEquivalent: "")
+            checkLinksItem.target = self
+            checkLinksItem.representedObject = message
+            checkLinksItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+            submenu.addItem(checkLinksItem)
 
+        }
+
+        applySubmenuHints(submenu)
         return submenu
     }
 
@@ -561,11 +765,6 @@ final class StatusBarController {
     @objc private func flagTapped(_ sender: NSMenuItem) {
         guard let message = sender.representedObject as? MailHeader else { return }
         onFlagMessage(message, !message.isFlagged)
-    }
-
-    @objc private func markReadTapped(_ sender: NSMenuItem) {
-        guard let message = sender.representedObject as? MailHeader else { return }
-        onMarkReadMessage(message, message.isUnread)
     }
 
     @objc private func copyCodeTapped(_ sender: NSMenuItem) {
@@ -590,6 +789,7 @@ final class StatusBarController {
             item.representedObject = link
             picker.addItem(item)
         }
+        NSApp.activate(ignoringOtherApps: true)
         picker.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 

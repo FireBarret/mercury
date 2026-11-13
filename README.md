@@ -16,7 +16,7 @@ polling, no need to keep Mail.app open, no Dock icon, no telemetry.
 - Up to two Gmail accounts, with unread counts in the menu bar
 - Recent messages list: unread first, or chronological
 - Quick actions per message: flag, mark read/unread, copy a verification code, pick a link from the email
-- Optional swipeable panel (beta): swipe messages with two fingers like Mail.app, with an optional Liquid Glass look
+- Optional swipeable panel: swipe messages with two fingers like Mail.app, or drive it entirely from the keyboard (arrow keys, E to mark read, R to reply, F to flag; all keys are configurable)
 - Reply in Gmail from the message list, and automatic updates (Sparkle, signed)
 - Open messages in Mail.app or Gmail, global shortcut, pause notifications, launch at login
 
@@ -70,9 +70,11 @@ Gmail needs an **App Password** for third-party apps:
 - Mercury can refresh Mail.app in the background when mail arrives (Preferences →
   "When new mail arrives"). The first time, macOS asks to let Mercury control Mail.
 - Set a global shortcut in Preferences → General.
-- **Swipeable panel (beta):** turn it on in Preferences → General. Swipe a message right
+- **Swipeable panel:** turn it on in Preferences → Swipe Panel. Swipe a message right
   or left to reveal actions; swipe far to trigger the outer one. You choose which actions
-  go where. ⌘, opens Preferences and Esc closes the panel.
+  go where. With the panel on, the global shortcut opens it on the newest message: use the
+  arrow keys to move, then E (mark read, jump to the next unread), R (reply in Gmail),
+  F (flag). Remap any key in Preferences → Keyboard. ⌘, opens Preferences and Esc closes the panel.
 
 If notifications don't appear, check System Settings → Notifications → Mercury.
 macOS also silences banners while you share your screen.

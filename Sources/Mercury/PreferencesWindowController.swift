@@ -320,11 +320,6 @@ final class PreferencesWindowController: NSWindowController {
         target: nil,
         action: nil
     )
-    private let glassCheckbox = NSButton(
-        checkboxWithTitle: "Liquid Glass look (macOS 26+)",
-        target: nil,
-        action: nil
-    )
     private let shortcutRecorder = ShortcutRecorderView()
 
     private let mailAppRefreshPopUp = NSPopUpButton()
@@ -336,16 +331,18 @@ final class PreferencesWindowController: NSWindowController {
     private let maxCountValueLabel = NSTextField(labelWithString: "")
 
     private let useCustomPanelCheckbox = NSButton(
-        checkboxWithTitle: "Use custom swipeable panel (Beta)",
+        checkboxWithTitle: "Use swipeable panel",
         target: nil,
         action: nil
     )
+    private let clickPopUp = NSPopUpButton()
     private let rightStep1PopUp = NSPopUpButton()
     private let rightStep2PopUp = NSPopUpButton()
     private let leftStep1PopUp = NSPopUpButton()
     private let leftStep2PopUp = NSPopUpButton()
 
     private let tabController = NSTabViewController()
+    private var keyRecorders: [QuickKey: KeyRecorderView] = [:]
 
     private let onSaveAccount: (String, String, AccountSlot) -> Void
     private let onRemoveAccount: (AccountSlot) -> Void
@@ -374,6 +371,7 @@ final class PreferencesWindowController: NSWindowController {
         addTab(title: "Menu Bar", symbol: "menubar.rectangle", form: buildMenuBarForm())
         addTab(title: "Accounts", symbol: "person.crop.circle", form: buildAccountsForm())
         addTab(title: "Swipe Panel", symbol: "hand.draw", form: buildSwipeForm())
+        addTab(title: "Keyboard", symbol: "keyboard", form: buildKeyboardForm())
         addAboutTab()
         window.center()
     }
@@ -592,6 +590,38 @@ final class PreferencesWindowController: NSWindowController {
         return form
     }
 
+    // MARK: - Keyboard
+
+    private func buildKeyboardForm() -> FormBuilder {
+        let form = FormBuilder()
+        form.note("Keys work in the swipeable panel: arrow keys pick a message (the global shortcut opens on the newest one), then press a key. In the classic dropdown, plain keys can't be caught by macOS menus, so only N, I, A and the open submenu's keys work. Click a field to change its key; Delete clears it.")
+        form.separator()
+        for action in QuickKey.available {
+            let recorder = KeyRecorderView()
+            recorder.setKey(Settings.key(for: action))
+            recorder.onKeyChanged = { [weak self] key in self?.assign(key, to: action) }
+            keyRecorders[action] = recorder
+            form.row(action.displayName, recorder)
+        }
+        form.separator()
+        form.control(NSButton(title: "Restore Default Keys", target: self, action: #selector(resetKeysTapped)))
+        return form
+    }
+
+    private func assign(_ key: String, to action: QuickKey) {
+        // A key can only do one thing: take it from whichever action had it.
+        if !key.isEmpty, let other = Settings.quickKey(matching: key), other != action {
+            Settings.setKey("", for: other)
+            keyRecorders[other]?.setKey("")
+        }
+        Settings.setKey(key, for: action)
+    }
+
+    @objc private func resetKeysTapped() {
+        Settings.resetKeys()
+        for action in QuickKey.available { keyRecorders[action]?.setKey(action.defaultKey) }
+    }
+
     // MARK: - Swipe Panel
 
     private func buildSwipeForm() -> FormBuilder {
@@ -601,25 +631,22 @@ final class PreferencesWindowController: NSWindowController {
         useCustomPanelCheckbox.action = #selector(useCustomPanelToggled)
         useCustomPanelCheckbox.state = Settings.useCustomPanel ? .on : .off
 
-        glassCheckbox.target = self
-        glassCheckbox.action = #selector(glassToggled)
-        glassCheckbox.state = Settings.useGlassEffect ? .on : .off
-
+        configureSwipePopUp(clickPopUp, current: Settings.clickAction, action: #selector(clickChanged))
         configureSwipePopUp(rightStep1PopUp, current: Settings.rightSwipeStep1, action: #selector(rightStep1Changed))
         configureSwipePopUp(rightStep2PopUp, current: Settings.rightSwipeStep2, action: #selector(rightStep2Changed))
         configureSwipePopUp(leftStep1PopUp, current: Settings.leftSwipeStep1, action: #selector(leftStep1Changed))
         configureSwipePopUp(leftStep2PopUp, current: Settings.leftSwipeStep2, action: #selector(leftStep2Changed))
 
+        form.checkbox(useCustomPanelCheckbox,
+                      note: "Replaces the dropdown with a floating panel. Use the arrow keys, or swipe messages with two fingers like Mail.app. Each direction reveals up to two actions; swipe further to trigger the second one immediately.")
+        form.separator()
+
+        form.row("Click on a message:", clickPopUp)
         form.row("Swipe right:", rightStep1PopUp)
         form.row("Swipe right, far:", rightStep2PopUp)
         form.row("Swipe left:", leftStep1PopUp)
         form.row("Swipe left, far:", leftStep2PopUp)
 
-        form.separator()
-
-        form.checkbox(useCustomPanelCheckbox,
-                      note: "Replaces the dropdown with a floating panel where you can swipe messages with two fingers, like Mail.app. Each direction reveals up to two actions -- swipe further to trigger the second one immediately.")
-        form.checkbox(glassCheckbox)
 
         updateSwipeControlsEnabled()
         return form
@@ -627,7 +654,7 @@ final class PreferencesWindowController: NSWindowController {
 
     private func updateSwipeControlsEnabled() {
         let enabled = Settings.useCustomPanel
-        let controls: [NSControl] = [glassCheckbox, rightStep1PopUp, rightStep2PopUp, leftStep1PopUp, leftStep2PopUp]
+        let controls: [NSControl] = [clickPopUp, rightStep1PopUp, rightStep2PopUp, leftStep1PopUp, leftStep2PopUp]
         for control in controls {
             control.isEnabled = enabled
         }
@@ -645,8 +672,8 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     private func configureSwipePopUp(_ popUp: NSPopUpButton, current: SwipeAction, action: Selector) {
-        configurePopUp(popUp, titles: SwipeAction.allCases.map { $0.displayName },
-                       selected: SwipeAction.allCases.firstIndex(of: current), action: action)
+        configurePopUp(popUp, titles: SwipeAction.available.map { $0.displayName },
+                       selected: SwipeAction.available.firstIndex(of: current), action: action)
     }
 
     private func makeLinkButton(title: String, url: String) -> NSButton {
@@ -756,11 +783,6 @@ final class PreferencesWindowController: NSWindowController {
         Settings.openMailAction = actions[index]
     }
 
-    @objc private func glassToggled() {
-        Settings.useGlassEffect = (glassCheckbox.state == .on)
-        onDisplaySettingsChanged()
-    }
-
     @objc private func orderChanged() {
         let index = orderPopUp.indexOfSelectedItem
         let orders = RecentListOrder.allCases
@@ -799,6 +821,7 @@ final class PreferencesWindowController: NSWindowController {
         onDisplaySettingsChanged()
     }
 
+    @objc private func clickChanged() { swipeChanged(clickPopUp) { Settings.clickAction = $0 } }
     @objc private func rightStep1Changed() { swipeChanged(rightStep1PopUp) { Settings.rightSwipeStep1 = $0 } }
     @objc private func rightStep2Changed() { swipeChanged(rightStep2PopUp) { Settings.rightSwipeStep2 = $0 } }
     @objc private func leftStep1Changed() { swipeChanged(leftStep1PopUp) { Settings.leftSwipeStep1 = $0 } }
@@ -806,7 +829,7 @@ final class PreferencesWindowController: NSWindowController {
 
     private func swipeChanged(_ popUp: NSPopUpButton, store: (SwipeAction) -> Void) {
         let index = popUp.indexOfSelectedItem
-        let actions = SwipeAction.allCases
+        let actions = SwipeAction.available
         guard index >= 0, index < actions.count else { return }
         store(actions[index])
         onDisplaySettingsChanged()

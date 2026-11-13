@@ -31,7 +31,12 @@ final class SwipeableMessageRowView: NSView {
     private var lastTick: CFTimeInterval = 0
     private let leftRevealMask = CALayer()
     private let rightRevealMask = CALayer()
-    private var isHovered = false
+    /// Mouse hover and keyboard selection are one shared state, driven by the
+    /// panel: these tell it when the pointer moves onto / off this row.
+    var onHover: (() -> Void)?
+    var onHoverEnd: (() -> Void)?
+    /// Keyboard selection (arrow keys in the panel).
+    var isSelected = false { didSet { applyHoverAppearance() } }
     private var trackingArea: NSTrackingArea?
 
     /// Width allotted to one action button, including its share of padding.
@@ -62,6 +67,9 @@ final class SwipeableMessageRowView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 50))
         wantsLayer = true
         buildUI(attributedText: attributedText)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("\(message.from), \(message.subject)\(message.isUnread ? ", unread" : "")")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -145,15 +153,10 @@ final class SwipeableMessageRowView: NSView {
         return message.isUnread ? "envelope.open.fill" : "envelope.fill"
     }
 
-    // Over Liquid Glass the rows must stay translucent so the glass shows
-    // through; an opaque fill would just paint a flat tile over it.
-    private let usesGlass = Settings.useGlassEffect
-    private var restingBackgroundColor: NSColor {
-        usesGlass ? NSColor.labelColor.withAlphaComponent(0.07) : .windowBackgroundColor
-    }
-    private var hoveredBackgroundColor: NSColor {
-        usesGlass ? NSColor.labelColor.withAlphaComponent(0.14) : .unemphasizedSelectedContentBackgroundColor
-    }
+    // Transparent at rest so rows sit directly on the panel's blur instead of
+    // reading as light tiles over whatever is behind it; only the selection and
+    // a swipe in progress get a fill.
+    private var restingBackgroundColor: NSColor { .clear }
 
     // MARK: - Hover
 
@@ -162,7 +165,7 @@ final class SwipeableMessageRowView: NSView {
         if let existing = trackingArea { removeTrackingArea(existing) }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -170,18 +173,14 @@ final class SwipeableMessageRowView: NSView {
         trackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        applyHoverAppearance()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        applyHoverAppearance()
-    }
+    override func mouseEntered(with event: NSEvent) { onHover?() }
+    override func mouseMoved(with event: NSEvent) { onHover?() }
+    override func mouseExited(with event: NSEvent) { onHoverEnd?() }
 
     private func applyHoverAppearance() {
-        let color = isHovered ? hoveredBackgroundColor : restingBackgroundColor
+        let color = isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.22)
+            : restingBackgroundColor
         contentContainer.layer?.backgroundColor = color.cgColor
     }
 
@@ -280,8 +279,7 @@ final class SwipeableMessageRowView: NSView {
     }
 
     /// Only the side being revealed is shown, and masked to exactly the
-    /// uncovered strip -- over Liquid Glass the row is translucent, so
-    /// anything underneath it would otherwise show through.
+    /// uncovered strip.
     private func applyOffset(_ value: CGFloat) {
         contentOffset = value
         contentContainer.setFrameOrigin(NSPoint(x: value, y: 0))

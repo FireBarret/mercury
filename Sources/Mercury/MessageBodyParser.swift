@@ -40,7 +40,8 @@ enum MessageBodyParser {
         var links: [String] = []
 
         func add(_ url: String) {
-            let trimmed = url.trimmingCharacters(in: CharacterSet(charactersIn: "\"'>) "))
+            let trimmed = url.replacingOccurrences(of: "&amp;", with: "&")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'>) "))
             guard trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://") else { return }
             guard !seen.contains(trimmed) else { return }
             seen.insert(trimmed)

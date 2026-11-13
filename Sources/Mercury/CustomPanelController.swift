@@ -8,6 +8,7 @@ private final class FloatingPanel: NSPanel {
     var onPreferences: (() -> Void)?
     var onQuit: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onKeyDown: ((NSEvent) -> Bool)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -26,6 +27,11 @@ private final class FloatingPanel: NSPanel {
         return super.performKeyEquivalent(with: event)
     }
 
+    override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true { return }
+        super.keyDown(with: event)
+    }
+
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
     }
@@ -40,16 +46,24 @@ private final class PanelContentView: NSView {
 /// A borderless NSButton that highlights as the cursor passes over it.
 /// Plain borderless buttons give no hover feedback at all, which made the
 /// panel's footer feel inert compared with a real NSMenu.
+/// Top-left-origin container so the message list pins to the top of its scroll view.
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 private final class HoverButton: NSButton {
     private var trackingArea: NSTrackingArea?
-    private var isHovered = false
+    var onHover: (() -> Void)?
+    var onHoverEnd: (() -> Void)?
+    /// Shared hover/keyboard selection, driven by the panel.
+    var isKeySelected = false { didSet { applyHoverAppearance() } }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let existing = trackingArea { removeTrackingArea(existing) }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -57,15 +71,9 @@ private final class HoverButton: NSButton {
         trackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        applyHoverAppearance()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        applyHoverAppearance()
-    }
+    override func mouseEntered(with event: NSEvent) { onHover?() }
+    override func mouseMoved(with event: NSEvent) { onHover?() }
+    override func mouseExited(with event: NSEvent) { onHoverEnd?() }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -75,8 +83,8 @@ private final class HoverButton: NSButton {
     private func applyHoverAppearance() {
         wantsLayer = true
         layer?.cornerRadius = 7
-        layer?.backgroundColor = isHovered
-            ? NSColor.unemphasizedSelectedContentBackgroundColor.cgColor
+        layer?.backgroundColor = isKeySelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             : NSColor.clear.cgColor
     }
 
@@ -88,12 +96,9 @@ private final class HoverButton: NSButton {
     }
 }
 
-/// The "option 1" swipeable panel: a fully custom floating window used
-/// instead of the classic NSMenu dropdown when Settings.useCustomPanel is
-/// on. Styled as a best-effort approximation of Apple's translucent
-/// "Liquid Glass" look using stable, documented APIs (NSVisualEffectView +
-/// rounded corners) -- true Liquid Glass materials from macOS 26 aren't
-/// something reproduced here with confidence.
+/// The swipeable panel: a floating window used instead of the classic NSMenu
+/// dropdown when Settings.useCustomPanel is on. Real trackpad swipes on
+/// message rows, full keyboard navigation, standard blur background.
 final class CustomPanelController: NSObject, NSWindowDelegate {
     private let panel: FloatingPanel
     private let contentHolder = PanelContentView()
@@ -101,10 +106,20 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     private let outerStack = NSStackView()
     private let statusLabel = NSTextField(labelWithString: "Checking…")
     private let messagesStack = NSStackView()
+    private let messagesScroll = NSScrollView()
+    private var messagesHeight: NSLayoutConstraint?
+    private let maxMessagesHeight: CGFloat = 440
     private let pauseButton: NSButton
     private var checkNowButton: NSButton?
     private var feedbackGeneration = 0
     private var markAllButton: NSButton?
+    private var messageRows: [(row: SwipeableMessageRowView, message: MailHeader)] = []
+    /// Unified keyboard selection: message rows first, then the footer buttons.
+    private var selectedIndex: Int?
+    private var footerButtons: [HoverButton] = []
+    private var selectionFromMouse = false
+    private var lastMousePoint = NSPoint.zero
+    private var keyHints: [(label: NSTextField, key: QuickKey)] = []
 
     private let panelWidth: CGFloat = 340
     private var clickAwayMonitor: Any?
@@ -161,6 +176,7 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         panel.onPreferences = { [weak self] in self?.onPreferences(); self?.hide() }
         panel.onQuit = { [weak self] in self?.onQuit() }
         panel.onCancel = { [weak self] in self?.hide() }
+        panel.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
 
         buildUI()
     }
@@ -190,26 +206,63 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         messagesStack.orientation = .vertical
         messagesStack.alignment = .width
         messagesStack.spacing = 4
-        outerStack.addArrangedSubview(messagesStack)
-        messagesStack.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
+        messagesStack.translatesAutoresizingMaskIntoConstraints = false
+        let documentView = FlippedView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(messagesStack)
+        NSLayoutConstraint.activate([
+            messagesStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            messagesStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            messagesStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            messagesStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            messagesStack.widthAnchor.constraint(equalToConstant: panelWidth)
+        ])
+        messagesScroll.drawsBackground = false
+        messagesScroll.hasVerticalScroller = false
+        messagesScroll.hasHorizontalScroller = false
+        messagesScroll.autohidesScrollers = true
+        messagesScroll.scrollerStyle = .overlay
+        messagesScroll.documentView = documentView
+        messagesScroll.translatesAutoresizingMaskIntoConstraints = false
+        messagesScroll.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
+        messagesHeight = messagesScroll.heightAnchor.constraint(equalToConstant: 0)
+        messagesHeight?.isActive = true
+        outerStack.addArrangedSubview(messagesScroll)
 
         outerStack.addArrangedSubview(divider())
 
         let checkNow = actionRow(title: "Check Now", symbol: "arrow.clockwise", action: #selector(checkNowTapped))
         checkNowButton = checkNow
+        addKeyHint(to: checkNow, key: .checkNow)
         outerStack.addArrangedSubview(padded(checkNow))
-        outerStack.addArrangedSubview(padded(actionRow(title: "Open Gmail", symbol: "globe", action: #selector(openGmailTapped))))
+        let openGmailButton = actionRow(title: "Open Gmail", symbol: "globe", action: #selector(openGmailTapped))
+        addKeyHint(to: openGmailButton, key: .openInbox)
+        outerStack.addArrangedSubview(padded(openGmailButton))
         pauseButton.removeFromSuperview()
         configureActionButton(pauseButton, title: "Pause Notifications (1h)", symbol: "moon.zzz", action: #selector(pauseTapped))
         outerStack.addArrangedSubview(padded(pauseButton))
         let markAll = actionRow(title: "Mark All as Read", symbol: "envelope.open", action: #selector(markAllTapped))
         markAllButton = markAll
+        addKeyHint(to: markAll, key: .markAllRead)
         outerStack.addArrangedSubview(padded(markAll))
 
         outerStack.addArrangedSubview(divider())
 
-        outerStack.addArrangedSubview(padded(actionRow(title: "Preferences…", symbol: "gearshape", action: #selector(preferencesTapped))))
-        outerStack.addArrangedSubview(padded(actionRow(title: "Quit Mercury", symbol: "power", action: #selector(quitTapped))))
+        let preferencesButton = actionRow(title: "Preferences…", symbol: "gearshape", action: #selector(preferencesTapped))
+        let quitButton = actionRow(title: "Quit Mercury", symbol: "power", action: #selector(quitTapped))
+        outerStack.addArrangedSubview(padded(preferencesButton))
+        outerStack.addArrangedSubview(padded(quitButton))
+        footerButtons = [checkNow, openGmailButton, pauseButton, markAll, preferencesButton, quitButton].compactMap { $0 as? HoverButton }
+        for button in footerButtons {
+            button.onHover = { [weak self, weak button] in
+                guard let self = self, let button = button, let i = self.footerButtons.firstIndex(where: { $0 === button }) else { return }
+                self.mouseSelect(self.messageRows.count + i)
+            }
+            button.onHoverEnd = { [weak self, weak button] in
+                guard let self = self, let button = button, let i = self.footerButtons.firstIndex(where: { $0 === button }) else { return }
+                self.mouseDeselect(self.messageRows.count + i)
+            }
+        }
     }
 
     /// NSStackView's .width alignment turned out not to reliably force
@@ -217,50 +270,34 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     /// was the root cause of the first real-world test showing half-width,
     /// right-hugged rows) -- every section pins its own width explicitly to
     /// panelWidth instead of trusting alignment alone.
-    /// (Re)builds the panel background: Liquid Glass when enabled and
-    /// available (content goes inside its contentView, the only part Apple
-    /// guarantees sits within the glass), otherwise the standard blur.
+    /// (Re)builds the panel background: a blurred, rounded popover surface.
     func refreshBackground() {
         contentHolder.removeFromSuperview()
-        let background: NSView
-        if let glass = makeGlassBackground() {
-            background = glass
-        } else {
-            let blur = NSVisualEffectView()
-            blur.material = .popover
-            blur.blendingMode = .behindWindow
-            blur.state = .active
-            blur.wantsLayer = true
-            blur.layer?.cornerRadius = 18
-            blur.layer?.masksToBounds = true
-            blur.layer?.borderWidth = 0.5
-            blur.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-            blur.addSubview(contentHolder)
-            NSLayoutConstraint.activate([
-                contentHolder.topAnchor.constraint(equalTo: blur.topAnchor),
-                contentHolder.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
-                contentHolder.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
-                contentHolder.trailingAnchor.constraint(equalTo: blur.trailingAnchor)
-            ])
-            background = blur
+        let blur = NSVisualEffectView()
+        blur.material = .popover
+        blur.blendingMode = .behindWindow
+        blur.state = .active
+        // A mask image (not a layer corner radius) so the window shadow
+        // follows the rounded shape instead of being cut at the corners.
+        let radius: CGFloat = 18
+        let mask = NSImage(size: NSSize(width: radius * 2 + 1, height: radius * 2 + 1), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
         }
-        background.toolTip = backgroundView?.toolTip
-        backgroundView = background
-        panel.contentView = background
-    }
-
-    /// NSGlassEffectView only exists in the macOS 26 SDK; the compile-time
-    /// guard keeps the project building on older toolchains (e.g. CI).
-    private func makeGlassBackground() -> NSView? {
-        #if compiler(>=6.2)
-        if Settings.useGlassEffect, #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = 22
-            glass.contentView = contentHolder
-            return glass
-        }
-        #endif
-        return nil
+        mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        mask.resizingMode = .stretch
+        blur.maskImage = mask
+        blur.addSubview(contentHolder)
+        NSLayoutConstraint.activate([
+            contentHolder.topAnchor.constraint(equalTo: blur.topAnchor),
+            contentHolder.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
+            contentHolder.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
+            contentHolder.trailingAnchor.constraint(equalTo: blur.trailingAnchor)
+        ])
+        blur.toolTip = backgroundView?.toolTip
+        backgroundView = blur
+        panel.contentView = blur
     }
 
     private func padded(_ view: NSView) -> NSView {
@@ -297,6 +334,8 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         button.target = self
         button.action = action
         button.isBordered = false
+        button.focusRingType = .none
+        button.refusesFirstResponder = true
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
@@ -360,6 +399,30 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
             messagesStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        let oldCount = messageRows.count
+        let previousSelection = selectedIndex.flatMap { $0 < oldCount ? messageRows[$0].message : nil }
+        let previousFooter = selectedIndex.flatMap { $0 >= oldCount ? $0 - oldCount : nil }
+        messageRows = []
+        defer {
+            if messageRows.isEmpty, !accounts.isEmpty, Settings.showRecentMessagesInMenu {
+                let empty = NSTextField(labelWithString: "No recent messages")
+                empty.font = .systemFont(ofSize: 12)
+                empty.textColor = .tertiaryLabelColor
+                messagesStack.addArrangedSubview(padded(empty))
+            }
+            messagesStack.layoutSubtreeIfNeeded()
+            messagesHeight?.constant = min(messagesStack.fittingSize.height, maxMessagesHeight)
+            if panel.isVisible { resizeToFit() }
+            // Keep the same row selected across refreshes.
+            if let previous = previousSelection {
+                let match = messageRows.firstIndex { $0.message.uid == previous.uid && $0.message.accountEmail == previous.accountEmail }
+                selectIndex(match ?? min(selectedIndex ?? 0, max(0, messageRows.count - 1)))
+            } else if let footer = previousFooter {
+                selectIndex(messageRows.count + footer)
+            } else {
+                selectIndex(nil)
+            }
+        }
 
         guard !accounts.isEmpty else {
             statusLabel.stringValue = "Not signed in"
@@ -397,11 +460,121 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
                 // aborted the app the moment IMAP delivered its first batch
                 // of messages. A constant can't have that failure mode.
                 row.widthAnchor.constraint(equalToConstant: panelWidth).isActive = true
-                row.onTapOpen = { MessageOpener.open(messageID: message.messageID) }
+                row.onTapOpen = { [weak self] in self?.perform(Settings.clickAction, on: message) }
                 row.onAction = { [weak self] action in self?.perform(action, on: message) }
+                row.onHover = { [weak self, weak row] in
+                    guard let self = self, let row = row, let i = self.messageRows.firstIndex(where: { $0.row === row }) else { return }
+                    self.mouseSelect(i)
+                }
+                row.onHoverEnd = { [weak self, weak row] in
+                    guard let self = self, let row = row, let i = self.messageRows.firstIndex(where: { $0.row === row }) else { return }
+                    self.mouseDeselect(i)
+                }
                 messagesStack.addArrangedSubview(row)
+                messageRows.append((row, message))
             }
         }
+    }
+
+    // MARK: - Keyboard
+
+    private var selectableCount: Int { messageRows.count + footerButtons.count }
+
+    private func selectIndex(_ index: Int?) {
+        let valid = index.flatMap { (0..<selectableCount).contains($0) ? $0 : nil }
+        selectedIndex = valid
+        for (i, entry) in messageRows.enumerated() { entry.row.isSelected = (i == valid) }
+        if let valid = valid, valid < messageRows.count {
+            let row = messageRows[valid].row
+            row.scrollToVisible(row.bounds)
+        }
+        for (i, button) in footerButtons.enumerated() { button.isKeySelected = (messageRows.count + i == valid) }
+    }
+
+    /// The pointer moved onto a row/button: it takes over the highlight. Only
+    /// real movement counts, so a stationary pointer never overrides the keys.
+    private func mouseSelect(_ index: Int) {
+        let point = NSEvent.mouseLocation
+        guard point != lastMousePoint else { return }
+        lastMousePoint = point
+        selectionFromMouse = true
+        if selectedIndex != index { selectIndex(index) }
+    }
+
+    private func mouseDeselect(_ index: Int) {
+        guard selectionFromMouse, selectedIndex == index else { return }
+        selectIndex(nil)
+    }
+
+    private func moveSelection(by delta: Int) {
+        selectionFromMouse = false
+        guard selectableCount > 0 else { return }
+        let current = selectedIndex ?? (delta > 0 ? -1 : selectableCount)
+        selectIndex(max(0, min(selectableCount - 1, current + delta)))
+    }
+
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
+        switch event.keyCode {
+        case 125: moveSelection(by: 1); return true
+        case 126: moveSelection(by: -1); return true
+        case 36, 76:
+            guard let i = selectedIndex else { return true }
+            if i < messageRows.count {
+                MessageOpener.open(messageID: messageRows[i].message.messageID)
+                hide()
+            } else {
+                footerButtons[i - messageRows.count].performClick(nil)
+            }
+            return true
+        default: break
+        }
+        guard let chars = event.charactersIgnoringModifiers?.lowercased(), chars.count == 1,
+              let key = Settings.quickKey(matching: chars) else { return false }
+        switch key {
+        case .markAllRead: markAllTapped(); return true
+        case .checkNow: checkNowTapped(); return true
+        case .openInbox: onOpenGmail(); hide(); return true
+        default: break
+        }
+        guard let index = selectedIndex, messageRows.indices.contains(index) else {
+            NSSound.beep()
+            return true
+        }
+        let message = messageRows[index].message
+        switch key {
+        case .markRead:
+            // Toggle read/unread, then jump to the next unread message below
+            // (stay put if there is none).
+            let next = messageRows.indices.dropFirst(index + 1).first { messageRows[$0].message.isUnread } ?? index
+            onMarkReadMessage(message, message.isUnread)
+            selectionFromMouse = false
+            selectIndex(next)
+        case .flag: onFlagMessage(message, !message.isFlagged)
+        case .reply: MessageOpener.replyInGmail(to: message); hide()
+        case .openMailApp: MessageOpener.openInMailApp(messageID: message.messageID); hide()
+        case .openGmail: MessageOpener.openInGmailBrowser(messageID: message.messageID); hide()
+        default: break
+        }
+        return true
+    }
+
+    /// A small greyed key hint at the right edge of an action button.
+    private func addKeyHint(to button: NSButton, key: QuickKey) {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .tertiaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -10),
+            label.centerYAnchor.constraint(equalTo: button.centerYAnchor)
+        ])
+        keyHints.append((label, key))
+    }
+
+    private func refreshKeyHints() {
+        for hint in keyHints { hint.label.stringValue = Settings.key(for: hint.key).uppercased() }
     }
 
     private func perform(_ action: SwipeAction, on message: MailHeader) {
@@ -412,6 +585,9 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         case .copyCode: onCopyCode(message)
         case .checkLinks: onCheckLinks(message)
         case .reply: MessageOpener.replyInGmail(to: message)
+        case .open:
+            MessageOpener.open(messageID: message.messageID)
+            hide()
         }
     }
 
@@ -428,13 +604,21 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         }
         result.append(NSAttributedString(
             string: (message.from.isEmpty ? "Unknown sender" : message.from) + "\n",
-            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: message.isUnread ? .semibold : .regular),
+                .foregroundColor: message.isUnread ? NSColor.labelColor : NSColor.secondaryLabelColor
+            ]
         ))
         let subject = message.subject.isEmpty ? "(no subject)" : message.subject
         result.append(NSAttributedString(
-            string: "    " + (subject.count > 60 ? String(subject.prefix(60)) + "…" : subject),
+            string: "    " + subject,
             attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
         ))
+        // Each paragraph (sender, subject) stays on one line and truncates
+        // with "…" instead of wrapping out of the row (wide Japanese text).
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        result.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: result.length))
         return result
     }
 
@@ -443,16 +627,20 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
     /// visibly on screen (hidden by a menu-bar manager, behind the notch),
     /// in which case the panel anchors to the top-right of the screen the
     /// mouse is on instead.
-    func toggle(anchorFrame: NSRect?) {
+    func toggle(anchorFrame: NSRect?, selectNewest: Bool = false) {
         if panel.isVisible {
             hide()
         } else {
-            show(anchorFrame: anchorFrame)
+            show(anchorFrame: anchorFrame, selectNewest: selectNewest)
         }
     }
 
-    private func show(anchorFrame: NSRect?) {
+    private func show(anchorFrame: NSRect?, selectNewest: Bool) {
         resetFeedback()
+        refreshKeyHints()
+        selectionFromMouse = false
+        lastMousePoint = NSEvent.mouseLocation
+        selectIndex(selectNewest && !messageRows.isEmpty ? 0 : nil)
         outerStack.layoutSubtreeIfNeeded()
         let screen = anchorFrame.flatMap { frame in
             NSScreen.screens.first { $0.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) }
@@ -467,13 +655,35 @@ final class CustomPanelController: NSObject, NSWindowDelegate {
         NSLog("Mercury: showing panel at (%.0f, %.0f) anchor=%@", x, y, anchorFrame.map { NSStringFromRect($0) } ?? "fallback")
 
         panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: height), display: true)
+        panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            panel.animator().alphaValue = 1
+        }
         if #available(macOS 14.0, *) {
             NSApp.activate()
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
         installClickAwayMonitor()
+        // The shadow is computed from the window's shape; refresh it once the
+        // content is laid out.
+        panel.invalidateShadow()
+        DispatchQueue.main.async { [weak self] in self?.panel.invalidateShadow() }
+    }
+
+    /// Re-fits the open panel to its content, keeping the top edge in place.
+    private func resizeToFit() {
+        outerStack.layoutSubtreeIfNeeded()
+        let screen = panel.screen ?? NSScreen.main
+        let maxHeight = (screen?.visibleFrame.height ?? 900) - 16
+        let height = min(outerStack.fittingSize.height + 24, maxHeight)
+        var frame = panel.frame
+        frame.origin.y += frame.height - height
+        frame.size.height = height
+        panel.setFrame(frame, display: true)
+        panel.invalidateShadow()
     }
 
     func hide() {

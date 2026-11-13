@@ -3,6 +3,10 @@ import AppKit
 /// One of the 4 quick actions, usable as a swipe-reveal action in the
 /// custom panel (in addition to the submenu in the classic menu). "None"
 /// leaves that swipe slot inactive.
+/// Copy Code and Check for Links are switched off for now. Flip this to
+/// bring back their menu items, swipe actions and keys.
+let quickExtractionEnabled = false
+
 enum SwipeAction: String, CaseIterable {
     case none
     case flag
@@ -10,6 +14,12 @@ enum SwipeAction: String, CaseIterable {
     case copyCode
     case checkLinks
     case reply
+    case open
+
+    /// Actions offered in Preferences.
+    static var available: [SwipeAction] {
+        allCases.filter { quickExtractionEnabled || ($0 != .copyCode && $0 != .checkLinks) }
+    }
 
     var displayName: String {
         switch self {
@@ -19,6 +29,7 @@ enum SwipeAction: String, CaseIterable {
         case .copyCode: return "Copy Code"
         case .checkLinks: return "Check for Links"
         case .reply: return "Reply in Gmail"
+        case .open: return "Open Message"
         }
     }
 
@@ -30,6 +41,7 @@ enum SwipeAction: String, CaseIterable {
         case .copyCode: return "key.fill"
         case .checkLinks: return "link"
         case .reply: return "arrowshape.turn.up.left.fill"
+        case .open: return "arrow.up.right.square.fill"
         }
     }
 
@@ -40,6 +52,7 @@ enum SwipeAction: String, CaseIterable {
         case .copyCode: return .systemPurple
         case .checkLinks: return .systemTeal
         case .reply: return .systemGreen
+        case .open: return .systemIndigo
         case .none: return .clear
         }
     }
@@ -91,6 +104,46 @@ enum MailAppRefreshMode: String, CaseIterable {
         case .hideAfterRefresh: return "Open, refresh, then hide"
         case .refreshIfAlreadyOpen: return "Refresh only if already open"
         case .disabled: return "Do nothing"
+        }
+    }
+}
+
+/// Keys that act on the highlighted message (or the menu) while the classic
+/// dropdown is open. Each can be remapped in Preferences → Keyboard.
+enum QuickKey: String, CaseIterable {
+    case markRead, reply, flag, copyCode, checkLinks, openMailApp, openGmail, markAllRead, checkNow, openInbox
+
+    var displayName: String {
+        switch self {
+        case .markRead: return "Mark as read, go down:"
+        case .reply: return "Reply in Gmail:"
+        case .flag: return "Flag / unflag:"
+        case .copyCode: return "Copy code:"
+        case .checkLinks: return "Check for links:"
+        case .openMailApp: return "Open in Mail.app:"
+        case .openGmail: return "Open in Gmail:"
+        case .markAllRead: return "Mark all as read:"
+        case .checkNow: return "Check now:"
+        case .openInbox: return "Open Gmail inbox:"
+        }
+    }
+
+    static var available: [QuickKey] {
+        allCases.filter { quickExtractionEnabled || ($0 != .copyCode && $0 != .checkLinks) }
+    }
+
+    var defaultKey: String {
+        switch self {
+        case .markRead: return "e"
+        case .reply: return "r"
+        case .flag: return "f"
+        case .copyCode: return "c"
+        case .checkLinks: return "l"
+        case .openMailApp: return "m"
+        case .openGmail: return "g"
+        case .markAllRead: return "a"
+        case .checkNow: return "n"
+        case .openInbox: return "i"
         }
     }
 }
@@ -171,14 +224,6 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: mailAppRefreshModeKey) }
     }
 
-    /// Liquid Glass background for the custom panel (macOS 26+; older
-    /// systems keep the standard blur). The classic NSMenu is drawn by the
-    /// system, so this has no effect there.
-    static var useGlassEffect: Bool {
-        get { UserDefaults.standard.bool(forKey: "Mercury.useGlassEffect") }
-        set { UserDefaults.standard.set(newValue, forKey: "Mercury.useGlassEffect") }
-    }
-
     static var recentListOrder: RecentListOrder {
         get {
             guard let raw = UserDefaults.standard.string(forKey: "Mercury.recentListOrder") else { return .unreadFirst }
@@ -224,13 +269,24 @@ enum Settings {
     /// leading edge) -- matches Mail.app's own convention of putting
     /// Unread there. Step 1 is revealed by a modest swipe; Step 2 needs a
     /// further swipe and auto-commits if released past that point.
+    /// Saved or default Copy Code / Check for Links become "None" while those are off.
+    private static func sanitized(_ action: SwipeAction) -> SwipeAction {
+        SwipeAction.available.contains(action) ? action : .none
+    }
+
+    /// What a plain click on a message does in the swipeable panel.
+    static var clickAction: SwipeAction {
+        get { sanitized(SwipeAction(rawValue: UserDefaults.standard.string(forKey: "Mercury.clickAction") ?? "") ?? .open) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "Mercury.clickAction") }
+    }
+
     static var rightSwipeStep1: SwipeAction {
-        get { SwipeAction(rawValue: UserDefaults.standard.string(forKey: rightSwipeStep1Key) ?? "") ?? .markRead }
+        get { sanitized(SwipeAction(rawValue: UserDefaults.standard.string(forKey: rightSwipeStep1Key) ?? "") ?? .markRead) }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: rightSwipeStep1Key) }
     }
 
     static var rightSwipeStep2: SwipeAction {
-        get { SwipeAction(rawValue: UserDefaults.standard.string(forKey: rightSwipeStep2Key) ?? "") ?? .checkLinks }
+        get { sanitized(SwipeAction(rawValue: UserDefaults.standard.string(forKey: rightSwipeStep2Key) ?? "") ?? .reply) }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: rightSwipeStep2Key) }
     }
 
@@ -238,13 +294,32 @@ enum Settings {
     /// trailing edge) -- matches Mail.app's own convention of putting Flag
     /// there.
     static var leftSwipeStep1: SwipeAction {
-        get { SwipeAction(rawValue: UserDefaults.standard.string(forKey: leftSwipeStep1Key) ?? "") ?? .flag }
+        get { sanitized(SwipeAction(rawValue: UserDefaults.standard.string(forKey: leftSwipeStep1Key) ?? "") ?? .flag) }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: leftSwipeStep1Key) }
     }
 
     static var leftSwipeStep2: SwipeAction {
-        get { SwipeAction(rawValue: UserDefaults.standard.string(forKey: leftSwipeStep2Key) ?? "") ?? .copyCode }
+        get { sanitized(SwipeAction(rawValue: UserDefaults.standard.string(forKey: leftSwipeStep2Key) ?? "") ?? .none) }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: leftSwipeStep2Key) }
+    }
+
+    // MARK: - In-menu keys
+
+    /// "" means unassigned.
+    static func key(for action: QuickKey) -> String {
+        UserDefaults.standard.string(forKey: "Mercury.key.\(action.rawValue)") ?? action.defaultKey
+    }
+
+    static func setKey(_ key: String, for action: QuickKey) {
+        UserDefaults.standard.set(key, forKey: "Mercury.key.\(action.rawValue)")
+    }
+
+    static func resetKeys() {
+        QuickKey.allCases.forEach { UserDefaults.standard.removeObject(forKey: "Mercury.key.\($0.rawValue)") }
+    }
+
+    static func quickKey(matching key: String) -> QuickKey? {
+        QuickKey.available.first { Settings.key(for: $0) == key && !key.isEmpty }
     }
 
     // MARK: - Menu-bar count colors

@@ -37,10 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onTogglePauseNotifications: { [weak self] in self?.togglePauseNotifications() },
             onFlagMessage: { [weak self] message, flagged in
                 guard let uid = message.uid else { return }
+                self?.applyLocal(message, flagged: flagged)
                 self?.imapClient(forAccountEmail: message.accountEmail)?.setFlag(uid: uid, flag: "\\Flagged", on: flagged)
             },
             onMarkReadMessage: { [weak self] message, markAsRead in
                 guard let uid = message.uid else { return }
+                self?.applyLocal(message, seen: markAsRead)
                 self?.imapClient(forAccountEmail: message.accountEmail)?.setFlag(uid: uid, flag: "\\Seen", on: markAsRead)
             },
             onCopyCode: { [weak self] message in self?.copyCode(from: message) },
@@ -161,12 +163,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    /// Reflects a flag/read change in the UI immediately; the next IMAP
+    /// refresh reconciles it with the server.
+    private func applyLocal(_ message: MailHeader, seen: Bool? = nil, flagged: Bool? = nil) {
+        guard let slot = AccountSlot.allCases.first(where: { Credentials.email(for: $0) == message.accountEmail }),
+              var list = recentMessages[slot],
+              let index = list.firstIndex(where: { $0.uid == message.uid }) else { return }
+        let old = list[index]
+        list[index] = MailHeader(uid: old.uid, from: old.from, subject: old.subject, messageID: old.messageID,
+                                 isUnread: seen.map { !$0 } ?? old.isUnread, isFlagged: flagged ?? old.isFlagged,
+                                 accountEmail: old.accountEmail, fromAddress: old.fromAddress)
+        recentMessages[slot] = list
+        if let seen = seen, old.isUnread == seen {
+            unreadCounts[slot] = max(0, (unreadCounts[slot] ?? 0) + (seen ? -1 : 1))
+        }
+        refreshStatusBar()
+    }
+
     private func copyCode(from message: MailHeader) {
+        DebugLog.write("copyCode uid=\(String(describing: message.uid)) account=\(message.accountEmail)")
         guard let uid = message.uid, let client = imapClient(forAccountEmail: message.accountEmail) else {
             notificationManager.notifyQuickActionResult(title: "Copy Code", body: "Couldn't fetch that message.")
             return
         }
         client.fetchMessageBody(uid: uid) { [weak self] rawBody in
+            DebugLog.write("copyCode fetched \(rawBody?.count ?? -1) chars")
             guard let rawBody = rawBody else {
                 self?.notificationManager.notifyQuickActionResult(title: "Copy Code", body: "Couldn't fetch that message.")
                 return
@@ -183,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkLinks(in message: MailHeader) {
+        DebugLog.write("checkLinks uid=\(String(describing: message.uid)) account=\(message.accountEmail)")
         guard let uid = message.uid, let client = imapClient(forAccountEmail: message.accountEmail) else {
             notificationManager.notifyQuickActionResult(title: "Check for Links", body: "Couldn't fetch that message.")
             return
@@ -193,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let links = MessageBodyParser.extractLinks(fromRawMessage: rawBody)
+            DebugLog.write("checkLinks fetched \(rawBody.count) chars, \(links.count) links")
             guard !links.isEmpty else {
                 self?.notificationManager.notifyQuickActionResult(title: "Check for Links", body: "No links found in that message.")
                 return
